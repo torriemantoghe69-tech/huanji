@@ -66,7 +66,7 @@ class PreviewDialog(QDialog):
         layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
 
 class WallpaperCard(QFrame):
-    def __init__(self, row, image_path, on_open, on_favorite, on_delete, parent=None):
+    def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
         self.setStyleSheet("""
@@ -106,15 +106,29 @@ class WallpaperCard(QFrame):
         rename = menu.addAction("重命名")
         delete = menu.addAction("删除图片")
         action = menu.exec(more.mapToGlobal(more.rect().bottomLeft())) if False else None
-        more.clicked.connect(lambda: self.show_menu(more, on_delete))
+        more.clicked.connect(lambda: self.show_menu(more, on_delete, on_rename, on_category, on_wallpaper, categories))
         bottom.addWidget(more)
         layout.addLayout(bottom)
 
-    def show_menu(self, button, on_delete):
+    def show_menu(self, button, on_delete, on_rename, on_category, on_wallpaper, categories):
         menu = QMenu(self)
+        rename = menu.addAction("重命名")
+        category_menu = menu.addMenu("移动到分类")
+        category_actions = {}
+        for name in categories:
+            category_actions[category_menu.addAction(name)] = name
+        category_actions[category_menu.addAction("未分类")] = "未分类"
+        menu.addSeparator()
+        wallpaper = menu.addAction("设为桌面壁纸")
         delete = menu.addAction("删除图片")
         chosen = menu.exec(button.mapToGlobal(button.rect().bottomLeft()))
-        if chosen == delete:
+        if chosen == rename:
+            on_rename(self.row[0], self.row[2])
+        elif chosen in category_actions:
+            on_category(self.row[0], category_actions[chosen])
+        elif chosen == wallpaper:
+            on_wallpaper(self.row[1])
+        elif chosen == delete:
             on_delete(self.row[0])
 
 class MainWindow(QMainWindow):
@@ -225,7 +239,7 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         for index, row in enumerate(filtered):
             path = IMAGE_DIR / row[1]
-            card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image)
+            card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, self.category_names())
             self.grid.addWidget(card, index // 4, index % 4)
         self.grid.setRowStretch((len(filtered) + 3) // 4, 1)
         self._refresh_categories(rows)
@@ -298,6 +312,41 @@ class MainWindow(QMainWindow):
         with sqlite3.connect(DB_PATH) as db:
             db.execute("UPDATE wallpapers SET favorite=? WHERE id=?", (0 if value else 1, uid))
         self.refresh()
+
+    def category_names(self):
+        return sorted({r[3] for r in self.rows() if r[3] not in ("未分类", "")})
+
+    def rename_image(self, uid, old_title):
+        title, ok = QInputDialog.getText(self, "重命名壁纸", "新名称：", text=old_title)
+        title = title.strip()
+        if ok and title:
+            with sqlite3.connect(DB_PATH) as db:
+                db.execute("UPDATE wallpapers SET title=? WHERE id=?", (title, uid))
+            self.refresh()
+
+    def move_category(self, uid, category):
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("UPDATE wallpapers SET category=? WHERE id=?", (category, uid))
+        self.refresh()
+
+    def set_wallpaper(self, filename):
+        if sys.platform != "win32":
+            QMessageBox.information(self, "设置壁纸", "一键设置桌面壁纸目前仅支持 Windows。")
+            return
+        image_path = str(IMAGE_DIR / filename)
+        SPI_SETDESKWALLPAPER = 20
+        SPIF_UPDATEINIFILE = 0x01
+        SPIF_SENDCHANGE = 0x02
+        try:
+            result = ctypes.windll.user32.SystemParametersInfoW(
+                SPI_SETDESKWALLPAPER, 0, image_path, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+            )
+            if result:
+                self.statusBar().showMessage("桌面壁纸设置成功", 4000)
+            else:
+                raise OSError("Windows 未能应用这张图片")
+        except Exception as exc:
+            QMessageBox.warning(self, "设置失败", str(exc))
 
     def delete_image(self, uid):
         answer = QMessageBox.question(self, "删除壁纸", "确定从壁纸馆删除这张图片吗？")
