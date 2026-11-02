@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import uuid
 from pathlib import Path
+from collections import OrderedDict
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
@@ -20,6 +21,8 @@ IMAGE_DIR = DATA_DIR / "images"
 THUMB_DIR = DATA_DIR / "thumbnails"
 DB_PATH = DATA_DIR / "gallery.db"
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+PIXMAP_CACHE = OrderedDict()
+PIXMAP_CACHE_LIMIT = 256
 
 DARK_STYLE = """
 QMainWindow, QWidget { background:#11131a; color:#edf0f7; font-family:'Microsoft YaHei UI'; font-size:13px; }
@@ -85,7 +88,17 @@ class WallpaperCard(QFrame):
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover.setFixedHeight(150)
         cover.setStyleSheet("background:#0e1016;border-radius:9px;")
-        pix = QPixmap(str(image_path))
+        cache_key = str(image_path)
+        pix = PIXMAP_CACHE.get(cache_key)
+        if pix is None:
+            pix = QPixmap(cache_key)
+            if not pix.isNull():
+                PIXMAP_CACHE[cache_key] = pix
+                PIXMAP_CACHE.move_to_end(cache_key)
+                while len(PIXMAP_CACHE) > PIXMAP_CACHE_LIMIT:
+                    PIXMAP_CACHE.popitem(last=False)
+        else:
+            PIXMAP_CACHE.move_to_end(cache_key)
         cover.setPixmap(pix.scaled(QSize(250, 150), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                    Qt.TransformationMode.SmoothTransformation))
         cover.mousePressEvent = lambda event: on_open(row)
@@ -243,10 +256,11 @@ class MainWindow(QMainWindow):
                 continue
             filtered.append(row)
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
+        categories = self.category_names()
         for index, row in enumerate(filtered):
             path = IMAGE_DIR / row[1]
             thumbnail = self.thumbnail_for(row[1])
-            card = WallpaperCard(row, thumbnail or path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, self.category_names())
+            card = WallpaperCard(row, thumbnail or path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, categories)
             self.grid.addWidget(card, index // 4, index % 4)
         self.grid.setRowStretch((len(filtered) + 3) // 4, 1)
         self._refresh_categories(rows)
@@ -337,24 +351,46 @@ class MainWindow(QMainWindow):
             self._import_paths(files)
 
     def _import_paths(self, files):
+        # Accept individual images and folders, including folders dropped onto the window.
+        candidates = []
+        seen = set()
+        for item in files:
+            path = Path(item)
+            if path.is_dir():
+                candidates.extend(p for p in path.rglob("*") if p.is_file())
+            elif path.is_file():
+                candidates.append(path)
+
         added = 0
-        for source in files:
-            src = Path(source)
-            if src.suffix.lower() not in SUPPORTED:
-                continue
-            uid = uuid.uuid4().hex
-            filename = uid + src.suffix.lower()
-            try:
-                shutil.copy2(src, IMAGE_DIR / filename)
-                with sqlite3.connect(DB_PATH) as db:
-                    db.execute("INSERT INTO wallpapers(id,filename,title) VALUES(?,?,?)",
-                               (uid, filename, src.stem))
-                added += 1
-            except OSError as exc:
-                QMessageBox.warning(self, "导入失败", f"{src.name}\n{exc}")
+        errors = []
+        with sqlite3.connect(DB_PATH) as db:
+            for src in candidates:
+                if src.suffix.lower() not in SUPPORTED:
+                    continue
+                try:
+                    resolved = str(src.resolve())
+                    if resolved in seen or IMAGE_DIR.resolve() in src.resolve().parents:
+                        continue
+                    seen.add(resolved)
+                    uid = uuid.uuid4().hex
+                    filename = uid + src.suffix.lower()
+                    shutil.copy2(src, IMAGE_DIR / filename)
+                    db.execute(
+                        "INSERT INTO wallpapers(id,filename,title) VALUES(?,?,?)",
+                        (uid, filename, src.stem)
+                    )
+                    added += 1
+                except (OSError, sqlite3.Error) as exc:
+                    errors.append(f"{src.name}: {exc}")
+
         self.refresh()
         if added:
-            self.statusBar().showMessage(f"已导入 {added} 张图片", 4000)
+            self.statusBar().showMessage(f"已导入 {added} 张图片", 5000)
+        if errors:
+            preview = "\n".join(errors[:8])
+            if len(errors) > 8:
+                preview += f"\n另有 {len(errors) - 8} 个文件导入失败。"
+            QMessageBox.warning(self, "部分文件导入失败", preview)
 
     def open_preview(self, row):
         path = IMAGE_DIR / row[1]
