@@ -1,7 +1,11 @@
 import ctypes
+import logging
+import os
 import shutil
 import sqlite3
 import sys
+import tempfile
+import traceback
 import uuid
 from pathlib import Path
 from collections import OrderedDict
@@ -23,6 +27,40 @@ DB_PATH = DATA_DIR / "gallery.db"
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 PIXMAP_CACHE = OrderedDict()
 PIXMAP_CACHE_LIMIT = 256
+
+def _log_path():
+    base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    try:
+        folder = base / "HuanjingWallpaperGallery"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / "crash.log"
+    except Exception:
+        return Path(tempfile.gettempdir()) / "HuanjingWallpaperGallery-crash.log"
+
+LOG_PATH = _log_path()
+logging.basicConfig(filename=str(LOG_PATH), level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s",
+                    encoding="utf-8")
+logging.info("========== Application launch ==========")
+logging.info("Python=%s | executable=%s | frozen=%s", sys.version, sys.executable, getattr(sys, "frozen", False))
+
+def _handle_exception(exc_type, exc_value, exc_tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    logging.critical("Uncaught exception", exc_info=(exc_type, exc_value, exc_tb))
+    try:
+        sys.__stderr__.write("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+        sys.__stderr__.flush()
+    except Exception:
+        pass
+
+sys.excepthook = _handle_exception
+
+def _qt_message_handler(mode, context, message):
+    logging.error("Qt message (type=%s, file=%s, line=%s): %s",
+                  mode, getattr(context, "file", None),
+                  getattr(context, "line", None), message)
 
 DARK_STYLE = """
 QMainWindow, QWidget { background:#11131a; color:#edf0f7; font-family:'Microsoft YaHei UI'; font-size:13px; }
@@ -458,13 +496,32 @@ class MainWindow(QMainWindow):
         self.refresh()
 
 def main():
-    ensure_storage()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setStyleSheet(DARK_STYLE)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+    from PySide6.QtCore import qInstallMessageHandler
+    qInstallMessageHandler(_qt_message_handler)
+
+    try:
+        logging.info("Preparing local storage: %s", DATA_DIR)
+        ensure_storage()
+        logging.info("Creating main window")
+        window = MainWindow()
+        window.show()
+        logging.info("Main window shown")
+    except Exception:
+        details = traceback.format_exc()
+        logging.critical("Startup failed\n%s", details)
+        QMessageBox.critical(
+            None, "幻境壁纸馆启动失败",
+            f"程序启动时发生错误。\n\n请把下面的日志文件发给开发者：\n{LOG_PATH}\n\n错误摘要：\n{details[-1800:]}"
+        )
+        return 1
+    return app.exec()
 
 if __name__ == "__main__":
-    main()
+    try:
+        sys.exit(main())
+    except Exception:
+        logging.critical("Fatal application error\n%s", traceback.format_exc())
+        raise
