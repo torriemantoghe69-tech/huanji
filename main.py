@@ -47,6 +47,10 @@ def ensure_storage():
             category TEXT NOT NULL DEFAULT '未分类', favorite INTEGER NOT NULL DEFAULT 0,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+        db.execute("""CREATE TABLE IF NOT EXISTS categories (
+            name TEXT PRIMARY KEY
+        )""")
+        db.execute("INSERT OR IGNORE INTO categories(name) SELECT DISTINCT category FROM wallpapers WHERE category NOT IN ('', '未分类')")
 
 class PreviewDialog(QDialog):
     def __init__(self, image_path, title, parent=None):
@@ -245,7 +249,9 @@ class MainWindow(QMainWindow):
         self._refresh_categories(rows)
 
     def _refresh_categories(self, rows=None):
-        names = sorted({r[3] for r in (rows or self.rows()) if r[3] not in ("未分类", "")})
+        with sqlite3.connect(DB_PATH) as db:
+            saved = {r[0] for r in db.execute("SELECT name FROM categories").fetchall()}
+        names = sorted(saved | {r[3] for r in (rows or self.rows()) if r[3] not in ("未分类", "")})
         current = self.categories.currentItem().text() if self.categories.currentItem() else None
         self.categories.blockSignals(True)
         self.categories.clear()
@@ -266,11 +272,20 @@ class MainWindow(QMainWindow):
     def add_category(self):
         name, ok = QInputDialog.getText(self, "新建分类", "分类名称：")
         name = name.strip()
-        if ok and name:
-            with sqlite3.connect(DB_PATH) as db:
-                db.execute("UPDATE wallpapers SET category=? WHERE category='未分类'", (name,))
-            self.current_category = name
-            self.refresh()
+        if not ok or not name:
+            return
+        if name in ("全部壁纸", "我的收藏", "未分类"):
+            QMessageBox.information(self, "分类名称", "这个名称是系统分类，请换一个名称。")
+            return
+        with sqlite3.connect(DB_PATH) as db:
+            try:
+                db.execute("INSERT INTO categories(name) VALUES(?)", (name,))
+            except sqlite3.IntegrityError:
+                QMessageBox.information(self, "分类已存在", "这个分类已经存在。")
+                return
+        self.show_favorites = False
+        self.current_category = name
+        self.refresh()
 
     def import_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择图片", str(Path.home()),
@@ -314,7 +329,9 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def category_names(self):
-        return sorted({r[3] for r in self.rows() if r[3] not in ("未分类", "")})
+        with sqlite3.connect(DB_PATH) as db:
+            saved = {r[0] for r in db.execute("SELECT name FROM categories").fetchall()}
+        return sorted(saved | {r[3] for r in self.rows() if r[3] not in ("未分类", "")})
 
     def rename_image(self, uid, old_title):
         title, ok = QInputDialog.getText(self, "重命名壁纸", "新名称：", text=old_title)
@@ -338,7 +355,12 @@ class MainWindow(QMainWindow):
         SPIF_UPDATEINIFILE = 0x01
         SPIF_SENDCHANGE = 0x02
         try:
-            result = ctypes.windll.user32.SystemParametersInfoW(
+            system_parameters_info = ctypes.windll.user32.SystemParametersInfoW
+            system_parameters_info.argtypes = [
+                ctypes.c_uint, ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_uint
+            ]
+            system_parameters_info.restype = ctypes.c_bool
+            result = system_parameters_info(
                 SPI_SETDESKWALLPAPER, 0, image_path, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
             )
             if result:
