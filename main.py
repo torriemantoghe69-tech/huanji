@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QShortcut, QKeySequence
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(1280, 820)
+        self.setAcceptDrops(True)
         self.current_category = "全部壁纸"
         self.show_favorites = False
         self._build_ui()
@@ -147,6 +148,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self):
         root = QWidget()
+        root.setAcceptDrops(True)
         self.setCentralWidget(root)
         outer = QHBoxLayout(root)
         outer.setContentsMargins(18, 18, 18, 18)
@@ -188,7 +190,7 @@ class MainWindow(QMainWindow):
         heading = QLabel("我的壁纸")
         heading.setStyleSheet("font-size:27px;font-weight:700;")
         intro.addWidget(heading)
-        self.count_label = QLabel("收藏每一份喜欢的画面")
+        self.count_label = QLabel("收藏每一份喜欢的画面 · 也可以把图片直接拖进窗口")
         self.count_label.setObjectName("Muted")
         intro.addWidget(self.count_label)
         header.addLayout(intro)
@@ -243,7 +245,8 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         for index, row in enumerate(filtered):
             path = IMAGE_DIR / row[1]
-            card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, self.category_names())
+            thumbnail = self.thumbnail_for(row[1])
+            card = WallpaperCard(row, thumbnail or path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, self.category_names())
             self.grid.addWidget(card, index // 4, index % 4)
         self.grid.setRowStretch((len(filtered) + 3) // 4, 1)
         self._refresh_categories(rows)
@@ -286,6 +289,41 @@ class MainWindow(QMainWindow):
         self.show_favorites = False
         self.current_category = name
         self.refresh()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() and any(url.isLocalFile() for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        self._import_paths(paths)
+        event.acceptProposedAction()
+
+    def thumbnail_for(self, filename):
+        source = IMAGE_DIR / filename
+        try:
+            stat = source.stat()
+            cache_name = f"{source.stem}_{stat.st_mtime_ns}_{stat.st_size}.jpg"
+            cached = THUMB_DIR / cache_name
+            if cached.exists():
+                return cached
+            reader = QImageReader(str(source))
+            reader.setAutoTransform(True)
+            original = reader.size()
+            if original.isValid():
+                scaled = original.scaled(QSize(500, 300), Qt.AspectRatioMode.KeepAspectRatio)
+                reader.setScaledSize(scaled)
+            image = reader.read()
+            if image.isNull():
+                return source
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.save(str(cached), "JPG", 88):
+                return cached
+        except (OSError, RuntimeError):
+            pass
+        return source
 
     def import_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择图片", str(Path.home()),
@@ -379,6 +417,8 @@ class MainWindow(QMainWindow):
             db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))
         if row:
             (IMAGE_DIR / row[0]).unlink(missing_ok=True)
+            for cached in THUMB_DIR.glob(f"{Path(row[0]).stem}_*.jpg"):
+                cached.unlink(missing_ok=True)
         self.refresh()
 
 def main():
