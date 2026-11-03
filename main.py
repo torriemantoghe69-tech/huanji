@@ -551,6 +551,21 @@ class MainWindow(QMainWindow):
         self.settings.setValue("theme", self.theme)
         self._style = LIGHT_STYLE if self.theme == "light" else DARK_STYLE
         self.setStyleSheet(self._style)
+        self._update_theme_button()
+
+    def _update_theme_button(self):
+        button = getattr(self, "theme_button", None)
+        if button is None:
+            return
+        if self.theme == "dark":
+            button.setText("☀ 浅色模式")
+            button.setToolTip("切换到浅色主题")
+        else:
+            button.setText("🌙 深色模式")
+            button.setToolTip("切换到深色主题")
+
+    def toggle_theme(self):
+        self.set_theme("light" if self.theme == "dark" else "dark")
 
     def _build_ui(self):
         # 主体布局：左侧分类栏 + 右侧内容区
