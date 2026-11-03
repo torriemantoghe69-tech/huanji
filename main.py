@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve, QObject
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QPropertyAnimation, QEasingCurve, QObject
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -447,10 +447,6 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("Huanjing", "WallpaperGallery")
         saved_theme = self.settings.value("theme", "dark")
         self.theme = saved_theme if saved_theme in ("light", "dark") else "dark"
-        self._thumbnail_timer = QTimer(self)
-        self._thumbnail_timer.setSingleShot(True)
-        self._thumbnail_timer.setInterval(70)
-        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
         self.selected_ids = set()
         self.selection_mode = False
         self.current_page = 0
@@ -612,9 +608,7 @@ class MainWindow(QMainWindow):
         self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = {}
-        self._virtual_row_height = 250
-        self._virtual_overscan_rows = 0
-        self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
+        self._card_row_height = 250
         content.addWidget(self.scroll, 1)
         outer.addLayout(content, 1)
 
@@ -623,7 +617,7 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
-        # 只保留视口附近的卡片控件，数据库中的完整壁纸列表仍然保留。
+        # 普通稳定列表：当前分页内的壁纸卡片一次性创建，滚动时不再销毁/重建。
         for card in self._wallpaper_cards.values():
             self.grid.removeWidget(card)
             card.deleteLater()
@@ -632,6 +626,7 @@ class MainWindow(QMainWindow):
             item = self.grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
         query = self.search.text().strip().lower()
         rows = self.rows()
         filtered = []
@@ -656,6 +651,7 @@ class MainWindow(QMainWindow):
             if query and query not in row[2].lower() and query not in row[3].lower():
                 continue
             filtered.append(row)
+
         self.visible_rows = filtered
         total_pages = max(1, (len(filtered) + self.page_size - 1) // self.page_size)
         self.current_page = max(0, min(self.current_page, total_pages - 1))
@@ -665,24 +661,41 @@ class MainWindow(QMainWindow):
         self.prev_page_btn.setEnabled(self.current_page > 0)
         self.next_page_btn.setEnabled(self.current_page + 1 < total_pages)
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  当前第 {self.current_page + 1} 页")
-        categories = self.category_names()
+
         self.grid_columns = 2
         self.grid.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         for column in range(self.grid_columns):
-            # 每行两张卡片，限制卡片宽度并居中，避免横向铺满导致缩略图过宽。
+            # 两列使用相同固定宽度，保持每行左右卡片一致。
             self.grid.setColumnMinimumWidth(column, 280)
             self.grid.setColumnStretch(column, 0)
-        self._card_categories = categories
+        self._card_categories = self.category_names()
         self.selected_ids.intersection_update(row[0] for row in filtered)
-        self._virtual_row_count = (len(self.page_rows) + self.grid_columns - 1) // self.grid_columns
-        self.grid_host.setMinimumHeight(
-            self._virtual_row_count * (self._virtual_row_height + self.grid.verticalSpacing()) + 16
-        )
-        for grid_row in range(self._virtual_row_count):
-            self.grid.setRowMinimumHeight(grid_row, self._virtual_row_height)
+
+        row_count = (len(self.page_rows) + self.grid_columns - 1) // self.grid_columns
+        for grid_row in range(row_count):
+            self.grid.setRowMinimumHeight(grid_row, self._card_row_height)
+
+        # 当前页卡片一次性载入；后续滚动只移动视口，不再动态隐藏或回收图片。
+        for index, row in enumerate(self.page_rows):
+            card = WallpaperCard(
+                row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
+                self.delete_image, self.rename_image, self.move_category,
+                self.set_wallpaper, self._card_categories,
+                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
+            )
+            card.setFixedSize(280, self._card_row_height)
+            self._wallpaper_cards[index] = card
+            self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
+            thumbnail = self.thumbnail_for(row[1])
+            card.image_path = str(thumbnail or (IMAGE_DIR / row[1]))
+            card.load_thumbnail()
+
         self._refresh_categories(rows)
         self.scroll.verticalScrollBar().setValue(0)
-        self.load_visible_thumbnails()
+        if self.selection_mode:
+            self.count_label.setText(
+                f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
+            )
 
     def change_page(self, offset):
         total_pages = max(1, (len(self.visible_rows) + self.page_size - 1) // self.page_size)
