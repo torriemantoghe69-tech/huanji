@@ -1177,8 +1177,10 @@ class NoToolTipFilter(QObject):
         # 某些 Windows/Qt 组合会在控件销毁或分页重建后留下空白提示窗。
         # 在窗口真正显示的事件阶段再拦截一次；普通菜单和对话框不受影响。
         if event_type == QEvent.Type.Show and isinstance(watched, QWidget):
+            # Qt.WindowType 中没有 WhatsThis；WhatsThis 只对应 QEvent.Type。
+            # 这里只需拦截真正的 Tooltip 顶层窗口。
             window_type = watched.windowType()
-            if window_type in (Qt.WindowType.ToolTip, Qt.WindowType.WhatsThis):
+            if window_type == Qt.WindowType.ToolTip:
                 watched.hide()
                 event.accept()
                 return True
