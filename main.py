@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -318,6 +318,42 @@ class WallpaperCard(QFrame):
         elif chosen == delete:
             on_delete(self.row[0])
 
+class SmoothScrollArea(QScrollArea):
+    """带缓动效果的滚动区域；动画由 Qt 事件循环驱动，目标约 60 FPS。"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.verticalScrollBar().setSingleStep(30)
+        self.scroll_animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self.scroll_animation.setDuration(180)
+        self.scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def wheelEvent(self, event):
+        pixel_delta = event.pixelDelta().y()
+        angle_delta = event.angleDelta().y()
+        if pixel_delta:
+            distance = -pixel_delta
+        elif angle_delta:
+            distance = -(angle_delta / 120.0) * 90
+        else:
+            super().wheelEvent(event)
+            return
+
+        bar = self.verticalScrollBar()
+        target = max(bar.minimum(), min(bar.maximum(), bar.value() + int(distance)))
+        if target == bar.value():
+            event.accept()
+            return
+
+        # 连续滚轮输入时从当前动画位置重新计算，避免动画堆积和明显卡顿。
+        self.scroll_animation.stop()
+        self.scroll_animation.setStartValue(bar.value())
+        self.scroll_animation.setEndValue(target)
+        self.scroll_animation.start()
+        event.accept()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -414,7 +450,7 @@ class MainWindow(QMainWindow):
         self.grid.setContentsMargins(0, 12, 0, 12)
         self.grid.setHorizontalSpacing(14)
         self.grid.setVerticalSpacing(14)
-        self.scroll = QScrollArea()
+        self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setWidget(self.grid_host)
         content.addWidget(self.scroll, 1)
