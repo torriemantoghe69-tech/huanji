@@ -537,8 +537,11 @@ class WallpaperCard(QFrame):
                 PIXMAP_CACHE.popitem(last=False)
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
-        # 正常情况下构造卡片时已按原图尺寸完成布局；仅在方向信息变化时修正。
-        self._set_portrait_layout(pix.height() > pix.width(), pix.size())
+        # 卡片创建时已根据原图尺寸确定布局。只有方向确实发生变化时才重排，
+        # 避免每次缩略图加载/点击后都触发 Qt 样式重算，造成预览区域短暂缩小。
+        is_portrait = pix.height() > pix.width()
+        if self._portrait_layout is None or self._portrait_layout != is_portrait:
+            self._set_portrait_layout(is_portrait, pix.size())
         self.cover.setText("")
         target_size = self.cover.contentsRect().size()
         if target_size.width() < 2 or target_size.height() < 2:
