@@ -440,8 +440,9 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        # 横屏和竖屏统一放进同一个固定预览框，完整显示原图比例，不裁切。
-        # 使用实际预览框尺寸缩放，避免固定 300px 宽在较窄卡片中被左右截断。
+        # 根据图片方向调整预览框：横屏框更宽高比协调，减少左右空白；竖屏完整显示且限制高度。
+        self._image_ratio = pix.height() / max(1, pix.width())
+        self._update_cover_height()
         target_size = self.cover.contentsRect().size()
         if target_size.width() < 2 or target_size.height() < 2:
             target_size = QSize(268, 190)
