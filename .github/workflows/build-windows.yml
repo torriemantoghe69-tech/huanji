@@ -23,6 +23,7 @@ jobs:
       - name: Build windowed executable
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed
+          --runtime-hook build_hooks/popup_guard.py
           --name HuanjingWallpaperGallery
           --exclude-module PySide6.Qt3DCore
           --exclude-module PySide6.Qt3DRender
