@@ -7,23 +7,52 @@ menus alone.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QEvent
+from PySide6.QtCore import QObject, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog
 
 
 class _BlankPopupGuard(QObject):
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.Show and isinstance(watched, QWidget):
-            # Keep normal dialogs and menus working.
-            if isinstance(watched, (QMenu, QDialog)):
-                return False
+    _CHECK_EVENTS = {
+        QEvent.Type.Show,
+        QEvent.Type.Polish,
+        QEvent.Type.PolishRequest,
+        QEvent.Type.Resize,
+        QEvent.Type.Move,
+        QEvent.Type.ParentChange,
+        QEvent.Type.UpdateRequest,
+        QEvent.Type.WindowActivate,
+    }
 
-            if watched.parentWidget() is None:
-                title = watched.windowTitle().strip()
-                size = watched.size()
-                if not title and size.width() <= 260 and size.height() <= 180:
-                    watched.hide()
-                    return True
+    def _is_blank_top_level(self, watched: QWidget) -> bool:
+        if isinstance(watched, (QMenu, QDialog)):
+            return False
+        if watched.parentWidget() is not None:
+            return False
+
+        title = watched.windowTitle().strip()
+        size = watched.size()
+        return not title and size.width() <= 420 and size.height() <= 260
+
+    def _hide_if_blank(self, watched: QWidget) -> None:
+        try:
+            if self._is_blank_top_level(watched):
+                watched.hide()
+        except RuntimeError:
+            # Widget may already be gone by the time the deferred check runs.
+            return
+
+    def eventFilter(self, watched, event):
+        if not isinstance(watched, QWidget):
+            return False
+
+        if event.type() in self._CHECK_EVENTS:
+            if self._is_blank_top_level(watched):
+                # Defer one tick so size/flags settle before we judge it.
+                QTimer.singleShot(0, lambda w=watched: self._hide_if_blank(w))
+
+        if event.type() == QEvent.Type.Show and self._is_blank_top_level(watched):
+            watched.hide()
+            return True
 
         return False
 
