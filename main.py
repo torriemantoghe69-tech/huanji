@@ -727,6 +727,7 @@ class MainWindow(QMainWindow):
         self.current_page = max(0, min(self.current_page, total_pages - 1))
         page_start = self.current_page * self.page_size
         self.page_rows = filtered[page_start:page_start + self.page_size]
+        self._virtual_row_count = (len(self.page_rows) + self.grid_columns - 1) // self.grid_columns
         self.page_label.setText(f"第 {self.current_page + 1} / {total_pages} 页")
         self.prev_page_btn.setEnabled(self.current_page > 0)
         self.next_page_btn.setEnabled(self.current_page + 1 < total_pages)
@@ -903,3 +904,199 @@ class MainWindow(QMainWindow):
             with sqlite3.connect(DB_PATH) as db:
                 db.execute("INSERT OR IGNORE INTO source_folders(path) VALUES(?)", (folder_path,))
             self._import_paths([folder_path])
+
+    def thumbnail_for(self, filename):
+        source = IMAGE_DIR / filename
+        try:
+            stat = source.stat()
+            cache_name = f"{source.stem}_{stat.st_mtime_ns}_{stat.st_size}.jpg"
+            cached = THUMB_DIR / cache_name
+            if cached.exists():
+                return cached
+            reader = QImageReader(str(source))
+            reader.setAutoTransform(True)
+            original = reader.size()
+            if original.isValid():
+                reader.setScaledSize(original.scaled(QSize(360, 220), Qt.AspectRatioMode.KeepAspectRatio))
+            image = reader.read()
+            if image.isNull():
+                return source
+            pixmap = QPixmap.fromImage(image)
+            if pixmap.save(str(cached), "JPG", 88):
+                return cached
+        except (OSError, RuntimeError):
+            pass
+        return source
+
+    def refresh_folders(self):
+        with sqlite3.connect(DB_PATH) as db:
+            folders = [row[0] for row in db.execute(
+                "SELECT path FROM source_folders ORDER BY added_at, path"
+            ).fetchall()]
+        if not folders:
+            QMessageBox.information(self, "刷新文件夹", "还没有记录导入过的文件夹。请先点击“导入文件夹”选择一次。")
+            return
+        existing = [path for path in folders if Path(path).is_dir()]
+        missing = [path for path in folders if not Path(path).is_dir()]
+        if not existing:
+            QMessageBox.warning(self, "刷新文件夹", "之前导入的文件夹都找不到了，请重新选择文件夹导入。")
+            return
+        self._import_paths(existing, show_result=False)
+        if missing:
+            QMessageBox.warning(self, "部分文件夹无法访问",
+                                "以下文件夹不存在或无法访问：\\n" + "\\n".join(missing[:5]))
+        self.statusBar().showMessage("文件夹扫描完成", 5000)
+
+    def delete_folder_wallpapers(self):
+        with sqlite3.connect(DB_PATH) as db:
+            folders = [Path(row[0]).resolve() for row in db.execute(
+                "SELECT path FROM source_folders"
+            ).fetchall()]
+            rows = db.execute(
+                "SELECT id, filename, source_path FROM wallpapers WHERE source_path IS NOT NULL AND source_path != ''"
+            ).fetchall()
+            targets = []
+            for uid, filename, source_path in rows:
+                try:
+                    source = Path(source_path).resolve()
+                    if any(source == folder or folder in source.parents for folder in folders):
+                        targets.append((uid, filename))
+                except (OSError, RuntimeError):
+                    continue
+            if not targets:
+                QMessageBox.information(self, "删除文件夹壁纸", "没有找到通过已导入文件夹添加的壁纸。")
+                return
+            answer = QMessageBox.question(
+                self, "删除文件夹壁纸",
+                f"确定从壁纸馆移除这 {len(targets)} 张文件夹导入的壁纸吗？\\n原文件夹中的图片不会被删除。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            db.executemany("DELETE FROM wallpapers WHERE id=?", [(uid,) for uid, _ in targets])
+        for _, filename in targets:
+            (IMAGE_DIR / filename).unlink(missing_ok=True)
+            for cached in THUMB_DIR.glob(f"{Path(filename).stem}_*.jpg"):
+                cached.unlink(missing_ok=True)
+        self.current_page = 0
+        self.refresh()
+        self.statusBar().showMessage(f"已从壁纸馆移除 {len(targets)} 张图片；原文件未改动", 5000)
+
+    def _import_paths(self, files, show_result=True):
+        candidates = []
+        seen = set()
+        for item in files:
+            path = Path(item)
+            try:
+                if path.is_dir():
+                    candidates.extend(p for p in path.rglob("*") if p.is_file())
+                elif path.is_file():
+                    candidates.append(path)
+            except OSError:
+                continue
+        added = skipped = 0
+        errors = []
+        with sqlite3.connect(DB_PATH) as db:
+            for src in candidates:
+                if src.suffix.lower() not in SUPPORTED:
+                    continue
+                try:
+                    resolved = str(src.resolve())
+                    if resolved in seen or IMAGE_DIR.resolve() in Path(resolved).parents:
+                        continue
+                    seen.add(resolved)
+                    if db.execute("SELECT 1 FROM wallpapers WHERE source_path=?", (resolved,)).fetchone():
+                        skipped += 1
+                        continue
+                    uid = uuid.uuid4().hex
+                    filename = uid + src.suffix.lower()
+                    shutil.copy2(src, IMAGE_DIR / filename)
+                    db.execute(
+                        "INSERT INTO wallpapers(id,filename,title,source_path) VALUES(?,?,?,?)",
+                        (uid, filename, src.stem, resolved)
+                    )
+                    added += 1
+                except (OSError, sqlite3.Error) as exc:
+                    errors.append(f"{src.name}: {exc}")
+        self.current_page = 0
+        self.refresh()
+        if added:
+            self.statusBar().showMessage(f"新增导入 {added} 张图片", 5000)
+        elif show_result:
+            self.statusBar().showMessage(f"没有发现新图片（已跳过 {skipped} 张重复图片）", 5000)
+        if errors:
+            preview = "\\n".join(errors[:8])
+            if len(errors) > 8:
+                preview += f"\\n另有 {len(errors) - 8} 个文件导入失败。"
+            QMessageBox.warning(self, "部分文件导入失败", preview)
+
+    def open_preview(self, row):
+        rows = getattr(self, "visible_rows", [])
+        try:
+            index = next(i for i, item in enumerate(rows) if item[0] == row[0])
+        except StopIteration:
+            rows, index = [row], 0
+        saved_page = self.current_page
+        saved_scroll = self.scroll.verticalScrollBar().value()
+        dialog = PreviewDialog(rows, index, self)
+        dialog.exec()
+        self.current_page = saved_page
+        QTimer.singleShot(0, lambda value=saved_scroll: self.scroll.verticalScrollBar().setValue(value))
+
+    def toggle_favorite(self, uid, value):
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("UPDATE wallpapers SET favorite=? WHERE id=?", (0 if value else 1, uid))
+        self.refresh()
+
+    def category_names(self):
+        with sqlite3.connect(DB_PATH) as db:
+            saved = {r[0] for r in db.execute("SELECT name FROM categories").fetchall()}
+        return sorted(saved | {r[3] for r in self.rows() if r[3] not in ("未分类", "")})
+
+    def rename_image(self, uid, old_title):
+        title, ok = QInputDialog.getText(self, "重命名壁纸", "新名称：", text=old_title)
+        title = title.strip()
+        if ok and title:
+            with sqlite3.connect(DB_PATH) as db:
+                db.execute("UPDATE wallpapers SET title=? WHERE id=?", (title, uid))
+            self.refresh()
+
+    def move_category(self, uid, category):
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("UPDATE wallpapers SET category=? WHERE id=?", (category, uid))
+        self.refresh()
+
+    def set_wallpaper(self, filename):
+        if sys.platform != "win32":
+            QMessageBox.information(self, "设置壁纸", "一键设置桌面壁纸目前仅支持 Windows。")
+            return
+        image_path = str(IMAGE_DIR / filename)
+        try:
+            api = ctypes.windll.user32.SystemParametersInfoW
+            api.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_uint]
+            api.restype = ctypes.c_bool
+            if api(20, 0, image_path, 0x01 | 0x02):
+                self.statusBar().showMessage("桌面壁纸设置成功", 4000)
+            else:
+                raise OSError("Windows 未能应用这张图片")
+        except Exception as exc:
+            QMessageBox.warning(self, "设置失败", str(exc))
+
+    def delete_image(self, uid):
+        answer = QMessageBox.question(
+            self, "删除壁纸", "确定从壁纸馆删除这张图片吗？\\n原始导入文件不会被删除。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        with sqlite3.connect(DB_PATH) as db:
+            row = db.execute("SELECT filename FROM wallpapers WHERE id=?", (uid,)).fetchone()
+            db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))
+        if row:
+            (IMAGE_DIR / row[0]).unlink(missing_ok=True)
+            for cached in THUMB_DIR.glob(f"{Path(row[0]).stem}_*.jpg"):
+                cached.unlink(missing_ok=True)
+        self.refresh()
+
