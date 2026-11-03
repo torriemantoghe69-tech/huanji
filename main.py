@@ -376,7 +376,7 @@ class ThumbnailTask(QRunnable):
 
 
 class WallpaperCard(QFrame):
-    def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, selection_mode=False, selected=False, on_select=None, parent=None):
+    def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None)
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -412,12 +412,6 @@ class WallpaperCard(QFrame):
         title.setWordWrap(False)
         layout.addWidget(title)
         bottom = QHBoxLayout()
-        self.select_box = QCheckBox("选择")
-        self.select_box.setVisible(selection_mode)
-        self.select_box.setChecked(selected)
-        if on_select:
-            self.select_box.toggled.connect(lambda checked: on_select(row[0], checked))
-        bottom.addWidget(self.select_box)
         cat = QLabel(row[3])
         cat.setObjectName("CardCategory")
         bottom.addWidget(cat)
@@ -499,14 +493,6 @@ class WallpaperCard(QFrame):
             Qt.TransformationMode.SmoothTransformation
         ))
 
-    def set_selection_state(self, selection_mode, selected=None):
-        """更新现有卡片的选择控件，不重建卡片或其子窗口。"""
-        self.select_box.setVisible(selection_mode)
-        if selected is not None:
-            self.select_box.blockSignals(True)
-            self.select_box.setChecked(bool(selected))
-            self.select_box.blockSignals(False)
-
     def show_menu(self, button, on_delete, on_rename, on_category, on_wallpaper, categories):
         menu = QMenu(self)
         rename = menu.addAction("重命名")
@@ -542,8 +528,6 @@ class MainWindow(QMainWindow):
         self.search = ChineseLineEdit()
         self.search.setPlaceholderText("搜索标题或分类…")
         self.search.textChanged.connect(self.refresh)
-        self.selected_ids = set()
-        self.selection_mode = False
         self.current_page = 0
         # 缩略图后台任务状态必须在首次 refresh() 前初始化。
         # refresh() 会立即递增 generation 并提交 ThumbnailTask。
@@ -630,18 +614,9 @@ class MainWindow(QMainWindow):
         self.refresh_folders_btn = QPushButton("↻ 刷新文件夹")
         self.refresh_folders_btn.clicked.connect(self.refresh_folders)
         controls.addWidget(self.refresh_folders_btn)
-        self.select_mode_btn = QPushButton("批量选择")
-        self.select_mode_btn.clicked.connect(self.toggle_select_mode)
-        controls.addWidget(self.select_mode_btn)
-        self.select_all_btn = QPushButton("全选当前列表")
-        self.select_all_btn.clicked.connect(self.select_all_current)
-        controls.addWidget(self.select_all_btn)
         self.delete_folder_btn = QPushButton("删除文件夹壁纸")
         self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
         controls.addWidget(self.delete_folder_btn)
-        self.delete_selected_btn = QPushButton("删除已选")
-        self.delete_selected_btn.clicked.connect(self.delete_selected)
-        controls.addWidget(self.delete_selected_btn)
         controls.addStretch()
         content.addLayout(controls)
 
@@ -748,7 +723,6 @@ class MainWindow(QMainWindow):
             self.grid.setColumnMinimumWidth(column, 280)
             self.grid.setColumnStretch(column, 1)
         self._card_categories = self.category_names()
-        self.selected_ids.intersection_update(row[0] for row in filtered)
 
         # 先快速建立占位卡片并完成翻页，缩略图由后台线程池逐张解码。
         for index, row in enumerate(self.page_rows):
@@ -756,7 +730,6 @@ class MainWindow(QMainWindow):
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
                 self.delete_image, self.rename_image, self.move_category,
                 self.set_wallpaper, self._card_categories,
-                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected,
                 parent=self.grid_host
             )
             card.setMinimumWidth(0)
@@ -771,10 +744,6 @@ class MainWindow(QMainWindow):
 
         self._refresh_categories(rows)
         self.scroll.verticalScrollBar().setValue(0)
-        if self.selection_mode:
-            self.count_label.setText(
-                f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
-            )
 
     def _on_thumbnail_ready(self, generation, index, image_path):
         self._thumbnail_jobs.pop((generation, index), None)
@@ -838,8 +807,7 @@ class MainWindow(QMainWindow):
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
                 self.delete_image, self.rename_image, self.move_category,
                 self.set_wallpaper, self._card_categories,
-                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected,
-                parent=self.grid_host
+                    parent=self.grid_host
             )
             card.setMinimumWidth(0)
             card.setFixedHeight(self._virtual_row_height)
@@ -850,8 +818,6 @@ class MainWindow(QMainWindow):
             card.image_path = str(thumbnail or (IMAGE_DIR / row[1]))
             card.load_thumbnail()
 
-        if self.selection_mode:
-            self.count_label.setText(f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张")
 
     def _refresh_categories(self, rows=None):
         with sqlite3.connect(DB_PATH) as db:
