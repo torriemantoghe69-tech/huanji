@@ -134,6 +134,15 @@ def ensure_storage():
         db.execute("""CREATE TABLE IF NOT EXISTS categories (
             name TEXT PRIMARY KEY
         )""")
+        columns = {row[1] for row in db.execute("PRAGMA table_info(wallpapers)")}
+        if "source_path" not in columns:
+            db.execute("ALTER TABLE wallpapers ADD COLUMN source_path TEXT")
+        db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_wallpapers_source_path
+                      ON wallpapers(source_path) WHERE source_path IS NOT NULL AND source_path != ''""")
+        db.execute("""CREATE TABLE IF NOT EXISTS source_folders (
+            path TEXT PRIMARY KEY,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )""")
         db.execute("INSERT OR IGNORE INTO categories(name) SELECT DISTINCT category FROM wallpapers WHERE category NOT IN ('', '未分类')")
 
 class ChineseLineEdit(QLineEdit):
@@ -532,6 +541,10 @@ class MainWindow(QMainWindow):
         folder_btn = QPushButton("导入文件夹")
         folder_btn.clicked.connect(self.import_folder)
         header.addWidget(folder_btn)
+        self.refresh_folders_btn = QPushButton("↻ 刷新文件夹")
+        self.refresh_folders_btn.setToolTip("重新扫描之前导入过的文件夹，只添加新图片，不重复导入")
+        self.refresh_folders_btn.clicked.connect(self.refresh_source_folders)
+        header.addWidget(self.refresh_folders_btn)
         content.addLayout(header)
 
         self.grid_host = QWidget()
@@ -698,10 +711,29 @@ class MainWindow(QMainWindow):
     def import_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "选择图片文件夹", str(Path.home()))
         if folder:
-            files = [str(p) for p in Path(folder).rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED]
-            self._import_paths(files)
+            folder_path = str(Path(folder).resolve())
+            with sqlite3.connect(DB_PATH) as db:
+                db.execute("INSERT OR IGNORE INTO source_folders(path) VALUES(?)", (folder_path,))
+            self._import_paths([folder_path])
 
-    def _import_paths(self, files):
+    def refresh_source_folders(self):
+        with sqlite3.connect(DB_PATH) as db:
+            folders = [row[0] for row in db.execute("SELECT path FROM source_folders ORDER BY added_at, path")]
+        if not folders:
+            QMessageBox.information(self, "刷新文件夹", "还没有记录导入过的文件夹。请先点击“导入文件夹”选择一次。")
+            return
+        existing = [path for path in folders if Path(path).is_dir()]
+        missing = [path for path in folders if not Path(path).is_dir()]
+        if not existing:
+            QMessageBox.warning(self, "刷新文件夹", "之前导入的文件夹都找不到了，请重新选择文件夹导入。")
+            return
+        self._import_paths(existing, show_result=False)
+        if missing:
+            QMessageBox.warning(self, "部分文件夹无法访问",
+                                "以下文件夹不存在或无法访问：\n" + "\n".join(missing[:5]))
+        self.statusBar().showMessage("文件夹扫描完成", 5000)
+
+    def _import_paths(self, files, show_result=True):
         # Accept individual images and folders, including folders dropped onto the window.
         candidates = []
         seen = set()
@@ -713,6 +745,7 @@ class MainWindow(QMainWindow):
                 candidates.append(path)
 
         added = 0
+        skipped = 0
         errors = []
         with sqlite3.connect(DB_PATH) as db:
             for src in candidates:
@@ -723,12 +756,15 @@ class MainWindow(QMainWindow):
                     if resolved in seen or IMAGE_DIR.resolve() in src.resolve().parents:
                         continue
                     seen.add(resolved)
+                    if db.execute("SELECT 1 FROM wallpapers WHERE source_path=?", (resolved,)).fetchone():
+                        skipped += 1
+                        continue
                     uid = uuid.uuid4().hex
                     filename = uid + src.suffix.lower()
                     shutil.copy2(src, IMAGE_DIR / filename)
                     db.execute(
-                        "INSERT INTO wallpapers(id,filename,title) VALUES(?,?,?)",
-                        (uid, filename, src.stem)
+                        "INSERT INTO wallpapers(id,filename,title,source_path) VALUES(?,?,?,?)",
+                        (uid, filename, src.stem, resolved)
                     )
                     added += 1
                 except (OSError, sqlite3.Error) as exc:
@@ -736,7 +772,9 @@ class MainWindow(QMainWindow):
 
         self.refresh()
         if added:
-            self.statusBar().showMessage(f"已导入 {added} 张图片", 5000)
+            self.statusBar().showMessage(f"新增导入 {added} 张图片", 5000)
+        elif show_result:
+            self.statusBar().showMessage(f"没有发现新图片（已跳过 {skipped} 张重复图片）", 5000)
         if errors:
             preview = "\n".join(errors[:8])
             if len(errors) > 8:
