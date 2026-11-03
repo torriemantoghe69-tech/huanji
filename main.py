@@ -262,7 +262,6 @@ class WallpaperCard(QFrame):
         cover.setStyleSheet("background:#0e1016;border-radius:9px;")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
-        self.load_thumbnail()
         cover.mousePressEvent = lambda event: on_open(row)
         layout.addWidget(cover)
         title = QLabel(row[2])
@@ -438,6 +437,7 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
+        self._wallpaper_cards = []
         while self.grid.count():
             item = self.grid.takeAt(0)
             if item.widget():
