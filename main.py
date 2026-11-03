@@ -887,52 +887,14 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def schedule_visible_thumbnails(self, *_):
-        # 滚动过程中合并重复加载请求，避免解码缩略图抢占滚动事件。
-        if hasattr(self, "_thumbnail_timer"):
-            self._thumbnail_timer.start()
+        # 页面最多显示 40 张，全部卡片已在 refresh() 中创建并后台生成缩略图。
+        # 不再因滚动而销毁/重建卡片，避免重建时行高变化引发页面抖动。
+        return
 
     def load_visible_thumbnails(self):
-        if not hasattr(self, "_wallpaper_cards") or not hasattr(self, "visible_rows"):
-            return
-        # 虚拟化：视口上下各预加载一行，其余卡片控件立即回收。
-        columns = getattr(self, "grid_columns", 2)
-        row_step = self._virtual_row_height + self.grid.verticalSpacing()
-        scroll_top = self.scroll.verticalScrollBar().value()
-        viewport_height = max(1, self.scroll.viewport().height())
-        first_row = max(0, scroll_top // row_step - self._virtual_overscan_rows)
-        last_row = min(
-            max(0, self._virtual_row_count - 1),
-            (scroll_top + viewport_height) // row_step + self._virtual_overscan_rows
-        )
-        start = first_row * columns
-        stop = min(len(self.page_rows), (last_row + 1) * columns)
-        wanted = set(range(start, stop))
-
-        for index in list(self._wallpaper_cards):
-            if index not in wanted:
-                card = self._wallpaper_cards.pop(index)
-                self.grid.removeWidget(card)
-                card.deleteLater()
-
-        for index in sorted(wanted):
-            if index in self._wallpaper_cards:
-                continue
-            row = self.page_rows[index]
-            card = WallpaperCard(
-                row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
-                self.delete_image, self.rename_image, self.move_category,
-                self.set_wallpaper, self._card_categories,
-                    parent=self.grid_host
-            )
-            card.setFixedWidth(self._card_column_width())
-            card.setFixedHeight(self._virtual_row_height)
-            card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            self._wallpaper_cards[index] = card
-            self.grid.addWidget(card, index // columns, index % columns)
-            thumbnail = self.thumbnail_for(row[1])
-            card.image_path = str(thumbnail or (IMAGE_DIR / row[1]))
-            card.load_thumbnail()
-
+        # 保留方法名以兼容现有定时器连接；当前页卡片一次性创建，
+        # 缩略图由 ThumbnailTask 异步加载，无需滚动时回收控件。
+        return
 
     def _refresh_categories(self, rows=None):
         # 系统分类必须始终显示；数据库中只保存自定义分类，不能只展示数据库内容。
