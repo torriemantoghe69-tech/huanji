@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
     QScrollArea, QGridLayout, QFrame, QMessageBox, QDialog, QInputDialog,
-    QMenu, QSizePolicy, QCheckBox, QSpinBox
+    QMenu, QSizePolicy, QCheckBox, QSpinBox, QToolTip
 )
 
 APP_NAME = "幻境壁纸馆"
@@ -633,9 +633,14 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
-        # 普通稳定列表：当前分页内的壁纸卡片一次性创建，滚动时不再销毁/重建。
+        # 翻页/筛选前先关闭悬浮提示，并让旧卡片立即退出鼠标命中区域。
+        # Windows/Qt 在鼠标停留于分页按钮或卡片上时，重建控件可能反复触发悬浮小窗。
+        QToolTip.hideText()
         for card in self._wallpaper_cards.values():
             self.grid.removeWidget(card)
+            card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            card.hide()
+            card.setParent(None)
             card.deleteLater()
         self._wallpaper_cards.clear()
         while self.grid.count():
@@ -719,6 +724,8 @@ class MainWindow(QMainWindow):
         total_pages = max(1, (len(self.visible_rows) + self.page_size - 1) // self.page_size)
         new_page = max(0, min(total_pages - 1, self.current_page + offset))
         if new_page != self.current_page:
+            # 翻页时显式关闭已显示的 Qt tooltip，避免鼠标停留导致悬浮窗重复出现。
+            QToolTip.hideText()
             self.current_page = new_page
             self.refresh()
 
@@ -1112,8 +1119,10 @@ class MainWindow(QMainWindow):
 class NoToolTipFilter(QObject):
     """阻止 Qt 工具提示窗口弹出，避免滚动或鼠标停留时出现闪烁小窗。"""
     def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.ToolTip:
-            event.ignore()
+        if event.type() in (QEvent.Type.ToolTip, QEvent.Type.WhatsThis):
+            # 接受并拦截提示事件，避免 Qt 在分页重建后再次排队显示悬浮窗口。
+            event.accept()
+            QToolTip.hideText()
             return True
         return super().eventFilter(watched, event)
 
