@@ -26,7 +26,7 @@ THUMB_DIR = DATA_DIR / "thumbnails"
 DB_PATH = DATA_DIR / "gallery.db"
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 PIXMAP_CACHE = OrderedDict()
-PIXMAP_CACHE_LIMIT = 256
+PIXMAP_CACHE_LIMIT = 64  # Bound decoded thumbnail memory
 
 def _log_path():
     base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
@@ -102,9 +102,17 @@ class PreviewDialog(QDialog):
         self.image = QLabel()
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image.setStyleSheet("background:#08090d;border-radius:12px;")
-        pix = QPixmap(str(image_path))
-        self.image.setPixmap(pix.scaled(QSize(1000, 620), Qt.AspectRatioMode.KeepAspectRatio,
-                                        Qt.TransformationMode.SmoothTransformation))
+        # Decode only the pixels needed for preview; originals can be very large.
+        reader = QImageReader(str(image_path))
+        reader.setAutoTransform(True)
+        source_size = reader.size()
+        if source_size.isValid():
+            reader.setScaledSize(source_size.scaled(
+                QSize(1000, 620), Qt.AspectRatioMode.KeepAspectRatio
+            ))
+        image = reader.read()
+        pix = QPixmap.fromImage(image) if not image.isNull() else QPixmap()
+        self.image.setPixmap(pix)
         layout.addWidget(self.image, 1)
         close = QPushButton("关闭预览")
         close.clicked.connect(self.accept)
@@ -137,7 +145,7 @@ class WallpaperCard(QFrame):
                     PIXMAP_CACHE.popitem(last=False)
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
-        cover.setPixmap(pix.scaled(QSize(250, 150), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+        cover.setPixmap(pix.scaled(QSize(220, 132), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                                    Qt.TransformationMode.SmoothTransformation))
         cover.mousePressEvent = lambda event: on_open(row)
         layout.addWidget(cover)
@@ -365,7 +373,7 @@ class MainWindow(QMainWindow):
             reader.setAutoTransform(True)
             original = reader.size()
             if original.isValid():
-                scaled = original.scaled(QSize(500, 300), Qt.AspectRatioMode.KeepAspectRatio)
+                scaled = original.scaled(QSize(360, 220), Qt.AspectRatioMode.KeepAspectRatio)
                 reader.setScaledSize(scaled)
             image = reader.read()
             if image.isNull():
