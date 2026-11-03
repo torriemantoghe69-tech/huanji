@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
     QScrollArea, QGridLayout, QFrame, QMessageBox, QDialog, QInputDialog,
-    QMenu, QSizePolicy, QCheckBox
+    QMenu, QSizePolicy, QCheckBox, QSpinBox
 )
 
 APP_NAME = "幻境壁纸馆"
@@ -447,6 +447,8 @@ class MainWindow(QMainWindow):
         self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
         self.selected_ids = set()
         self.selection_mode = False
+        self.current_page = 0
+        self.page_size = max(1, min(40, int(self.settings.value("page_size", 4))))
         self._build_ui()
         self.apply_theme()
         self.refresh()
@@ -566,6 +568,30 @@ class MainWindow(QMainWindow):
         header.addWidget(self.delete_selected_btn)
         content.addLayout(header)
 
+        # 分页工具栏：默认每页 4 张，支持调整每页容量。
+        pagination = QHBoxLayout()
+        pagination.addStretch()
+        pagination.addWidget(QLabel("每页显示"))
+        self.page_size_spin = QSpinBox()
+        self.page_size_spin.setRange(1, 40)
+        self.page_size_spin.setValue(self.page_size)
+        self.page_size_spin.setSuffix(" 张")
+        self.page_size_spin.setFixedWidth(86)
+        self.page_size_spin.valueChanged.connect(self.change_page_size)
+        pagination.addWidget(self.page_size_spin)
+        self.prev_page_btn = QPushButton("‹ 上一页")
+        self.prev_page_btn.clicked.connect(lambda: self.change_page(-1))
+        pagination.addWidget(self.prev_page_btn)
+        self.page_label = QLabel("第 1 / 1 页")
+        self.page_label.setMinimumWidth(100)
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pagination.addWidget(self.page_label)
+        self.next_page_btn = QPushButton("下一页 ›")
+        self.next_page_btn.clicked.connect(lambda: self.change_page(1))
+        pagination.addWidget(self.next_page_btn)
+        pagination.addStretch()
+        content.addLayout(pagination)
+
         self.grid_host = QWidget()
         self.grid = QGridLayout(self.grid_host)
         self.grid.setContentsMargins(0, 8, 0, 8)
@@ -581,7 +607,7 @@ class MainWindow(QMainWindow):
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = {}
         self._virtual_row_height = 250
-        self._virtual_overscan_rows = 3
+        self._virtual_overscan_rows = 0
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         content.addWidget(self.scroll, 1)
         outer.addLayout(content, 1)
@@ -614,24 +640,45 @@ class MainWindow(QMainWindow):
                 continue
             filtered.append(row)
         self.visible_rows = filtered
-        self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
+        total_pages = max(1, (len(filtered) + self.page_size - 1) // self.page_size)
+        self.current_page = max(0, min(self.current_page, total_pages - 1))
+        page_start = self.current_page * self.page_size
+        self.page_rows = filtered[page_start:page_start + self.page_size]
+        self.page_label.setText(f"第 {self.current_page + 1} / {total_pages} 页")
+        self.prev_page_btn.setEnabled(self.current_page > 0)
+        self.next_page_btn.setEnabled(self.current_page + 1 < total_pages)
+        self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  当前第 {self.current_page + 1} 页")
         categories = self.category_names()
         self.grid_columns = 2
         self.grid.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         for column in range(self.grid_columns):
             # 每行两张卡片，限制卡片宽度并居中，避免横向铺满导致缩略图过宽。
-            self.grid.setColumnMinimumWidth(column, 340)
+            self.grid.setColumnMinimumWidth(column, 280)
             self.grid.setColumnStretch(column, 0)
         self._card_categories = categories
         self.selected_ids.intersection_update(row[0] for row in filtered)
-        self._virtual_row_count = (len(filtered) + self.grid_columns - 1) // self.grid_columns
+        self._virtual_row_count = (len(self.page_rows) + self.grid_columns - 1) // self.grid_columns
         self.grid_host.setMinimumHeight(
             self._virtual_row_count * (self._virtual_row_height + self.grid.verticalSpacing()) + 16
         )
         for grid_row in range(self._virtual_row_count):
             self.grid.setRowMinimumHeight(grid_row, self._virtual_row_height)
         self._refresh_categories(rows)
+        self.scroll.verticalScrollBar().setValue(0)
         self.load_visible_thumbnails()
+
+    def change_page(self, offset):
+        total_pages = max(1, (len(self.visible_rows) + self.page_size - 1) // self.page_size)
+        new_page = max(0, min(total_pages - 1, self.current_page + offset))
+        if new_page != self.current_page:
+            self.current_page = new_page
+            self.refresh()
+
+    def change_page_size(self, value):
+        self.page_size = max(1, min(40, int(value)))
+        self.current_page = 0
+        self.settings.setValue("page_size", self.page_size)
+        self.refresh()
 
     def schedule_visible_thumbnails(self, *_):
         # 滚动过程中合并重复加载请求，避免解码缩略图抢占滚动事件。
@@ -652,7 +699,7 @@ class MainWindow(QMainWindow):
             (scroll_top + viewport_height) // row_step + self._virtual_overscan_rows
         )
         start = first_row * columns
-        stop = min(len(self.visible_rows), (last_row + 1) * columns)
+        stop = min(len(self.page_rows), (last_row + 1) * columns)
         wanted = set(range(start, stop))
 
         for index in list(self._wallpaper_cards):
@@ -664,14 +711,14 @@ class MainWindow(QMainWindow):
         for index in sorted(wanted):
             if index in self._wallpaper_cards:
                 continue
-            row = self.visible_rows[index]
+            row = self.page_rows[index]
             card = WallpaperCard(
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
                 self.delete_image, self.rename_image, self.move_category,
                 self.set_wallpaper, self._card_categories,
                 self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
             )
-            card.setFixedSize(340, self._virtual_row_height)
+            card.setFixedSize(280, self._virtual_row_height)
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // columns, index % columns)
             thumbnail = self.thumbnail_for(row[1])
@@ -679,7 +726,7 @@ class MainWindow(QMainWindow):
             card.load_thumbnail()
 
         if self.selection_mode:
-            self.count_label.setText(f"共 {len(self.visible_rows)} 张壁纸 · 已选择 {len(self.selected_ids)} 张")
+            self.count_label.setText(f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张")
 
     def _refresh_categories(self, rows=None):
         with sqlite3.connect(DB_PATH) as db:
