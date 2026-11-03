@@ -10,13 +10,13 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QTimer
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
     QScrollArea, QGridLayout, QFrame, QMessageBox, QDialog, QInputDialog,
-    QMenu, QSizePolicy, QTimer
+    QMenu, QSizePolicy
 )
 
 APP_NAME = "幻境壁纸馆"
