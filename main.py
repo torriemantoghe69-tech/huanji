@@ -11,7 +11,7 @@ from pathlib import Path
 from collections import OrderedDict
 
 from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QPropertyAnimation, QEasingCurve, QObject, QRunnable, QThreadPool, Signal, QTimer
-from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
+from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader, QImage
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
@@ -177,12 +177,45 @@ class ChineseLineEdit(QLineEdit):
                 action.triggered.connect(callback)
         menu.exec(event.globalPos())
 
+class PreviewLoadSignals(QObject):
+    finished = Signal(object, object)
+
+
+class PreviewLoadTask(QRunnable):
+    """在后台线程按预览窗口尺寸解码图片，避免切换时阻塞界面。"""
+    def __init__(self, cache_key, source_path):
+        super().__init__()
+        self.cache_key = cache_key
+        self.source_path = str(source_path)
+        self.signals = PreviewLoadSignals()
+
+    def run(self):
+        image = QImage()
+        try:
+            reader = QImageReader(self.source_path)
+            reader.setAutoTransform(True)
+            original = reader.size()
+            target = QSize(self.cache_key[1], self.cache_key[2])
+            if original.isValid():
+                reader.setScaledSize(original.scaled(target, Qt.AspectRatioMode.KeepAspectRatio))
+            image = reader.read()
+        except (OSError, RuntimeError):
+            logging.exception("Preview image load failed: %s", self.source_path)
+        self.signals.finished.emit(self.cache_key, image)
+
+
 class PreviewDialog(QDialog):
     def __init__(self, rows, start_index=0, parent=None):
         super().__init__(parent)
         self.rows = list(rows)
         self.current_index = max(0, min(start_index, len(self.rows) - 1))
         self._fullscreen = False
+        self._preview_pool = QThreadPool(self)
+        self._preview_pool.setMaxThreadCount(2)
+        self._image_cache = OrderedDict()
+        self._image_cache_limit = 6
+        self._loading_keys = set()
+        self._current_key = None
         self.setWindowTitle("图片预览")
         self.resize(1050, 720)
         self.setMinimumSize(560, 420)
@@ -228,40 +261,78 @@ class PreviewDialog(QDialog):
         self.shortcut_escape = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self.shortcut_escape.activated.connect(self._escape_fullscreen)
 
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(90)
+        self._resize_timer.timeout.connect(self.show_current)
         self.show_current()
+
+    def _target_size(self):
+        target = self.image.contentsRect().size()
+        if target.width() < 100 or target.height() < 100:
+            return QSize(1000, 620)
+        return target
+
+    def _cache_key(self, index, target):
+        path = str(IMAGE_DIR / self.rows[index][1])
+        return (path, target.width(), target.height())
+
+    def _request_image(self, index, target):
+        if not self.rows:
+            return
+        index %= len(self.rows)
+        key = self._cache_key(index, target)
+        if key in self._image_cache or key in self._loading_keys:
+            return
+        self._loading_keys.add(key)
+        task = PreviewLoadTask(key, key[0])
+        task.signals.finished.connect(self._on_image_loaded)
+        self._preview_pool.start(task)
+
+    def _on_image_loaded(self, key, image):
+        self._loading_keys.discard(key)
+        if image.isNull():
+            if key == self._current_key:
+                self.image.setPixmap(QPixmap())
+                self.image.setText("无法读取这张图片")
+            return
+        self._image_cache[key] = image
+        self._image_cache.move_to_end(key)
+        while len(self._image_cache) > self._image_cache_limit:
+            self._image_cache.popitem(last=False)
+        if key == self._current_key:
+            self.image.setText("")
+            self.image.setPixmap(QPixmap.fromImage(image))
 
     def show_current(self):
         if not self.rows:
             return
         row = self.rows[self.current_index]
-        path = IMAGE_DIR / row[1]
         self.setWindowTitle(row[2] or "图片预览")
-        self.position_label.setText(
-            f"{row[2]}    ·    {self.current_index + 1} / {len(self.rows)}"
-        )
+        self.position_label.setText(f"{row[2]}    ·    {self.current_index + 1} / {len(self.rows)}")
         self.prev_button.setEnabled(len(self.rows) > 1)
         self.next_button.setEnabled(len(self.rows) > 1)
 
-        target = self.image.size()
-        if target.width() < 100 or target.height() < 100:
-            target = QSize(1000, 620)
-        reader = QImageReader(str(path))
-        reader.setAutoTransform(True)
-        original = reader.size()
-        if original.isValid():
-            reader.setScaledSize(original.scaled(
-                target, Qt.AspectRatioMode.KeepAspectRatio
-            ))
-        image = reader.read()
-        if image.isNull():
-            self.image.setText("无法读取这张图片")
-            self.image.setPixmap(QPixmap())
-        else:
+        target = self._target_size()
+        self._current_key = self._cache_key(self.current_index, target)
+        cached = self._image_cache.get(self._current_key)
+        if cached is not None:
+            self._image_cache.move_to_end(self._current_key)
             self.image.setText("")
-            self.image.setPixmap(QPixmap.fromImage(image))
+            self.image.setPixmap(QPixmap.fromImage(cached))
+        else:
+            # 保留上一张已显示的画面，直到新图解码完成，避免切换时闪黑/白屏。
+            current_pixmap = self.image.pixmap()
+            if current_pixmap is None or current_pixmap.isNull():
+                self.image.setText("正在加载图片…")
+            self._request_image(self.current_index, target)
+
+        # 预读相邻图片；切换时通常可直接命中内存缓存。
+        if len(self.rows) > 1:
+            self._request_image(self.current_index - 1, target)
+            self._request_image(self.current_index + 1, target)
 
     def eventFilter(self, watched, event):
-        # 在图片区域滚动鼠标滚轮即可切换上一张/下一张。
         if watched is self.image and event.type() == QEvent.Type.Wheel:
             delta = event.angleDelta().y()
             if delta > 0:
@@ -275,7 +346,6 @@ class PreviewDialog(QDialog):
         return super().eventFilter(watched, event)
 
     def wheelEvent(self, event):
-        # 鼠标滚轮位于预览窗口其他空白区域时同样可以切换。
         delta = event.angleDelta().y()
         if delta > 0:
             self.show_previous()
@@ -317,7 +387,8 @@ class PreviewDialog(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.show_current()
+        self._resize_timer.start()
+
 
 class SmoothScrollArea(QScrollArea):
     def __init__(self, parent=None):
