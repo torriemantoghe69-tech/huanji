@@ -511,6 +511,14 @@ class MainWindow(QMainWindow):
         self.selected_ids = set()
         self.selection_mode = False
         self.current_page = 0
+
+        # 缩略图后台任务状态必须在首次 refresh() 前初始化。
+        # refresh() 会立即递增 generation 并提交 ThumbnailTask。
+        self._thumbnail_generation = 0
+        self._thumbnail_jobs = {}
+        self._thumbnail_pool = QThreadPool.globalInstance()
+        self._thumbnail_pool.setMaxThreadCount(max(2, min(4, QThreadPool.globalInstance().maxThreadCount())))
+
         self.page_size = max(1, min(40, int(self.settings.value("page_size", 4))))
         self._build_ui()
         self.apply_theme()
