@@ -297,8 +297,7 @@ class PreviewDialog(QDialog):
                 self.image.setText("无法读取这张图片")
             return
         self._image_cache[key] = image
-        self._image_cache.move_to_end(key)
-        while len(self._image_cache) > self._image_cache_limit:
+        self._image_cache.move_to_end(key)        while len(self._image_cache) > self._image_cache_limit:
             self._image_cache.popitem(last=False)
         if key == self._current_key:
             self.image.setText("")
@@ -597,8 +596,7 @@ class MainWindow(QMainWindow):
         self._thumbnail_timer = QTimer(self)
         self._thumbnail_timer.setSingleShot(True)
         self._thumbnail_timer.setInterval(120)
-        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
-        self._virtual_row_height = 250
+        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)        self._virtual_row_height = 250
         self._virtual_overscan_rows = 1
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         self.refresh()
@@ -723,7 +721,8 @@ class MainWindow(QMainWindow):
         self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # 始终预留垂直滚动条槽位，分类/分页后内容高度变化时视口宽度不会跳变。
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.scroll.verticalScrollBar().setSingleStep(18)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.grid_host.setMinimumWidth(0)
@@ -797,7 +796,8 @@ class MainWindow(QMainWindow):
         self.grid_columns = 2
         self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         for column in range(self.grid_columns):
-            self.grid.setColumnMinimumWidth(column, 280)
+            # 两列始终参与布局计算；即使某页只有一张图，也保留另一列的空间。
+            self.grid.setColumnMinimumWidth(column, 0)
             self.grid.setColumnStretch(column, 1)
         self._card_categories = self.category_names()
 
@@ -811,7 +811,7 @@ class MainWindow(QMainWindow):
             )
             card.setMinimumWidth(0)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            card.setFixedWidth(self._card_column_width())
+            # 卡片填满固定的网格单元，不单独锁定像素宽度，避免翻页时向左/向右跳动。
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
 
@@ -839,13 +839,15 @@ class MainWindow(QMainWindow):
     def _apply_card_column_widths(self):
         if not hasattr(self, "grid") or not hasattr(self, "scroll"):
             return
-        width = self._card_column_width()
-        # 两列都保留相同的固定宽度约束，避免单张卡片所在列在翻页时被拉伸。
+        # 两列使用相同伸缩权重，卡片宽度由稳定的视口和网格列共同决定。
+        # 不给单张卡片设置固定宽度，避免页面切换时网格重新计算造成横向位移。
         for column in range(2):
-            self.grid.setColumnMinimumWidth(column, width)
-            self.grid.setColumnStretch(column, 0)
+            self.grid.setColumnMinimumWidth(column, 0)
+            self.grid.setColumnStretch(column, 1)
         for card in self._wallpaper_cards.values():
-            card.setFixedWidth(width)
+            card.setMinimumWidth(0)
+            card.setMaximumWidth(16777215)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, card.sizePolicy().verticalPolicy())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -897,8 +899,7 @@ class MainWindow(QMainWindow):
             (scroll_top + viewport_height) // row_step + self._virtual_overscan_rows
         )
         start = first_row * columns
-        stop = min(len(self.page_rows), (last_row + 1) * columns)
-        wanted = set(range(start, stop))
+        stop = min(len(self.page_rows), (last_row + 1) * columns)        wanted = set(range(start, stop))
 
         for index in list(self._wallpaper_cards):
             if index not in wanted:
@@ -917,7 +918,8 @@ class MainWindow(QMainWindow):
                     parent=self.grid_host
             )
             card.setMinimumWidth(0)
-            card.setFixedWidth(self._card_column_width())
+            card.setMinimumWidth(0)
+            card.setMaximumWidth(16777215)
             card.setFixedHeight(self._virtual_row_height)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._wallpaper_cards[index] = card
@@ -1197,10 +1199,8 @@ class MainWindow(QMainWindow):
             return
         with sqlite3.connect(DB_PATH) as db:
             row = db.execute("SELECT filename FROM wallpapers WHERE id=?", (uid,)).fetchone()
-            db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))
-        if row:
+            db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))        if row:
             (IMAGE_DIR / row[0]).unlink(missing_ok=True)
             for cached in THUMB_DIR.glob(f"{Path(row[0]).stem}_*.jpg"):
                 cached.unlink(missing_ok=True)
         self.refresh()
-
