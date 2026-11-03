@@ -597,7 +597,8 @@ class MainWindow(QMainWindow):
         self._thumbnail_timer = QTimer(self)
         self._thumbnail_timer.setSingleShot(True)
         self._thumbnail_timer.setInterval(120)
-        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)        self._virtual_row_height = 250
+        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
+        self._virtual_row_height = 250
         self._virtual_overscan_rows = 1
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         self.refresh()
@@ -900,7 +901,8 @@ class MainWindow(QMainWindow):
             (scroll_top + viewport_height) // row_step + self._virtual_overscan_rows
         )
         start = first_row * columns
-        stop = min(len(self.page_rows), (last_row + 1) * columns)        wanted = set(range(start, stop))
+        stop = min(len(self.page_rows), (last_row + 1) * columns)
+        wanted = set(range(start, stop))
 
         for index in list(self._wallpaper_cards):
             if index not in wanted:
@@ -1200,7 +1202,8 @@ class MainWindow(QMainWindow):
             return
         with sqlite3.connect(DB_PATH) as db:
             row = db.execute("SELECT filename FROM wallpapers WHERE id=?", (uid,)).fetchone()
-            db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))        if row:
+            db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))
+        if row:
             (IMAGE_DIR / row[0]).unlink(missing_ok=True)
             for cached in THUMB_DIR.glob(f"{Path(row[0]).stem}_*.jpg"):
                 cached.unlink(missing_ok=True)
