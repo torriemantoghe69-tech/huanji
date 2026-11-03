@@ -194,12 +194,16 @@ class PreviewLoadTask(QRunnable):
         try:
             reader = QImageReader(self.source_path)
             reader.setAutoTransform(True)
+            # Prevent corrupt/huge source files from allocating unbounded memory.
+            QImageReader.setAllocationLimit(128)
             original = reader.size()
-            target = QSize(self.cache_key[1], self.cache_key[2])
+            target = QSize(min(self.cache_key[1], 2048), min(self.cache_key[2], 2048))
             if original.isValid():
                 reader.setScaledSize(original.scaled(target, Qt.AspectRatioMode.KeepAspectRatio))
             image = reader.read()
-        except (OSError, RuntimeError):
+            if image.isNull():
+                logging.warning("Preview decode failed: %s (%s)", self.source_path, reader.errorString())
+        except Exception:
             logging.exception("Preview image load failed: %s", self.source_path)
         self.signals.finished.emit(self.cache_key, image)
 
@@ -215,6 +219,7 @@ class PreviewDialog(QDialog):
         self._image_cache = OrderedDict()
         self._image_cache_limit = 6
         self._loading_keys = set()
+        self._preview_tasks = {}
         self._current_key = None
         self.setWindowTitle("图片预览")
         self.resize(1050, 720)
@@ -284,13 +289,21 @@ class PreviewDialog(QDialog):
         key = self._cache_key(index, target)
         if key in self._image_cache or key in self._loading_keys:
             return
+        # Keep at most one active decode and one newest queued request. Rapid
+        # navigation replaces stale queued work instead of growing an unbounded queue.
+        for old_key, old_task in list(self._preview_tasks.items()):
+            if old_key != key and self._preview_pool.tryTake(old_task):
+                self._preview_tasks.pop(old_key, None)
+                self._loading_keys.discard(old_key)
         self._loading_keys.add(key)
         task = PreviewLoadTask(key, key[0])
+        self._preview_tasks[key] = task
         task.signals.finished.connect(self._on_image_loaded)
         self._preview_pool.start(task)
 
     def _on_image_loaded(self, key, image):
         self._loading_keys.discard(key)
+        self._preview_tasks.pop(key, None)
         if image.isNull():
             if key == self._current_key:
                 self.image.setPixmap(QPixmap())
@@ -327,10 +340,7 @@ class PreviewDialog(QDialog):
                 self.image.setText("正在加载图片…")
             self._request_image(self.current_index, target)
 
-        # 预读相邻图片；切换时通常可直接命中内存缓存。
-        if len(self.rows) > 1:
-            self._request_image(self.current_index - 1, target)
-            self._request_image(self.current_index + 1, target)
+        # 不预读相邻图片，避免大图连续解码占用过多内存。
 
     def eventFilter(self, watched, event):
         if watched is self.image and event.type() == QEvent.Type.Wheel:
