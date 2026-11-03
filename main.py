@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QPropertyAnimation, QEasingCurve, QObject
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QPropertyAnimation, QEasingCurve, QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -339,6 +339,43 @@ class SmoothScrollArea(QScrollArea):
         event.accept()
 
 
+class ThumbnailSignals(QObject):
+    finished = Signal(int, int, str)
+
+
+class ThumbnailTask(QRunnable):
+    """在线程池中读取并生成缩略图，避免翻页时阻塞界面线程。"""
+    def __init__(self, generation, index, source_path):
+        super().__init__()
+        self.generation = generation
+        self.index = index
+        self.source_path = str(source_path)
+        self.signals = ThumbnailSignals()
+
+    def run(self):
+        source = Path(self.source_path)
+        result_path = str(source)
+        try:
+            stat = source.stat()
+            cache_name = f"{source.stem}_{stat.st_mtime_ns}_{stat.st_size}.jpg"
+            cached = THUMB_DIR / cache_name
+            if cached.exists():
+                result_path = str(cached)
+            else:
+                reader = QImageReader(str(source))
+                reader.setAutoTransform(True)
+                original = reader.size()
+                if original.isValid():
+                    scaled = original.scaled(QSize(480, 300), Qt.AspectRatioMode.KeepAspectRatio)
+                    reader.setScaledSize(scaled)
+                image = reader.read()
+                if not image.isNull() and image.save(str(cached), "JPG", 88):
+                    result_path = str(cached)
+        except (OSError, RuntimeError):
+            logging.exception("Thumbnail generation failed: %s", source)
+        self.signals.finished.emit(self.generation, self.index, result_path)
+
+
 class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, selection_mode=False, selected=False, on_select=None, parent=None):
         super().__init__(parent)
@@ -414,6 +451,21 @@ class WallpaperCard(QFrame):
             target_size, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         ))
+
+    def _update_cover_height(self):
+        if not hasattr(self, "cover"):
+            return
+        ratio = getattr(self, "_image_ratio", None)
+        if ratio is None:
+            return
+        # 横屏预览框按接近 16:9 的比例增高，避免宽图缩在矮框中央留下大块左右空白；
+        # 竖屏图限制预览框高度，完整显示原图，不裁切。
+        desired = int(max(190, min(340, self.width() * ratio)))
+        self.cover.setFixedHeight(desired)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_cover_height()
 
     def set_selection_state(self, selection_mode, selected=None):
         """更新现有卡片的选择控件，不重建卡片或其子窗口。"""
@@ -633,8 +685,9 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
-        # 翻页/筛选前先关闭悬浮提示，并让旧卡片立即退出鼠标命中区域。
-        # Windows/Qt 在鼠标停留于分页按钮或卡片上时，重建控件可能反复触发悬浮小窗。
+        # 每次刷新都递增代次；旧页面尚未完成的缩略图任务会被丢弃。
+        self._thumbnail_generation += 1
+        generation = self._thumbnail_generation
         QToolTip.hideText()
         for card in self._wallpaper_cards.values():
             self.grid.removeWidget(card)
@@ -654,7 +707,6 @@ class MainWindow(QMainWindow):
         for row in rows:
             if self.show_favorites and not row[4]:
                 continue
-            # 按图片真实尺寸归类：横屏与竖屏分别显示，不改变原始文件。
             if self.current_category in ("横屏壁纸", "竖屏壁纸"):
                 reader = QImageReader(str(IMAGE_DIR / row[1]))
                 image_size = reader.size()
@@ -686,17 +738,12 @@ class MainWindow(QMainWindow):
         self.grid_columns = 2
         self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         for column in range(self.grid_columns):
-            # 两列平均分配整个内容宽度，卡片随窗口横向伸缩。
             self.grid.setColumnMinimumWidth(column, 280)
             self.grid.setColumnStretch(column, 1)
         self._card_categories = self.category_names()
         self.selected_ids.intersection_update(row[0] for row in filtered)
 
-        row_count = (len(self.page_rows) + self.grid_columns - 1) // self.grid_columns
-        for grid_row in range(row_count):
-            self.grid.setRowMinimumHeight(grid_row, self._card_row_height)
-
-        # 当前页卡片一次性载入；后续滚动只移动视口，不再动态隐藏或回收图片。
+        # 先快速建立占位卡片并完成翻页，缩略图由后台线程池逐张解码。
         for index, row in enumerate(self.page_rows):
             card = WallpaperCard(
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
@@ -705,13 +752,14 @@ class MainWindow(QMainWindow):
                 self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
             )
             card.setMinimumWidth(0)
-            card.setFixedHeight(self._card_row_height)
-            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
-            thumbnail = self.thumbnail_for(row[1])
-            card.image_path = str(thumbnail or (IMAGE_DIR / row[1]))
-            card.load_thumbnail()
+
+            task = ThumbnailTask(generation, index, IMAGE_DIR / row[1])
+            task.signals.finished.connect(self._on_thumbnail_ready)
+            self._thumbnail_jobs[(generation, index)] = task
+            self._thumbnail_pool.start(task)
 
         self._refresh_categories(rows)
         self.scroll.verticalScrollBar().setValue(0)
@@ -719,6 +767,17 @@ class MainWindow(QMainWindow):
             self.count_label.setText(
                 f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
             )
+
+    def _on_thumbnail_ready(self, generation, index, image_path):
+        self._thumbnail_jobs.pop((generation, index), None)
+        # 只更新当前页对应卡片，翻页后返回的旧任务结果不会污染新页面。
+        if generation != self._thumbnail_generation:
+            return
+        card = self._wallpaper_cards.get(index)
+        if card is None:
+            return
+        card.image_path = image_path
+        card.load_thumbnail()
 
     def change_page(self, offset):
         total_pages = max(1, (len(self.visible_rows) + self.page_size - 1) // self.page_size)
@@ -834,30 +893,6 @@ class MainWindow(QMainWindow):
         paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
         self._import_paths(paths)
         event.acceptProposedAction()
-
-    def thumbnail_for(self, filename):
-        source = IMAGE_DIR / filename
-        try:
-            stat = source.stat()
-            cache_name = f"{source.stem}_{stat.st_mtime_ns}_{stat.st_size}.jpg"
-            cached = THUMB_DIR / cache_name
-            if cached.exists():
-                return cached
-            reader = QImageReader(str(source))
-            reader.setAutoTransform(True)
-            original = reader.size()
-            if original.isValid():
-                scaled = original.scaled(QSize(360, 220), Qt.AspectRatioMode.KeepAspectRatio)
-                reader.setScaledSize(scaled)
-            image = reader.read()
-            if image.isNull():
-                return source
-            pixmap = QPixmap.fromImage(image)
-            if pixmap.save(str(cached), "JPG", 88):
-                return cached
-        except (OSError, RuntimeError):
-            pass
-        return source
 
     def import_images(self):
         files, _ = QFileDialog.getOpenFileNames(self, "选择图片", str(Path.home()),
