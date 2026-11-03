@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_wallpaper_cards") or not hasattr(self, "visible_rows"):
             return
         # 虚拟化：视口上下各预加载一行，其余卡片控件立即回收。
-        columns = getattr(self, "grid_columns", 5)
+        columns = getattr(self, "grid_columns", 2)
         row_step = self._virtual_row_height + self.grid.verticalSpacing()
         scroll_top = self.scroll.verticalScrollBar().value()
         viewport_height = max(1, self.scroll.viewport().height())
