@@ -30,6 +30,15 @@ class _BlankPopupGuard(QObject):
 
 # Patch QApplication so the guard is installed as soon as the app is created.
 _orig_init = QApplication.__init__
+_orig_set_parent = QWidget.setParent
+
+
+def _patched_set_parent(self, *args, **kwargs):
+    parent = args[0] if args else kwargs.get("parent", None)
+    if parent is None and self.objectName() == "WallpaperCard":
+        # Keep wallpaper cards attached so they do not flash as blank top-level windows.
+        return
+    return _orig_set_parent(self, *args, **kwargs)
 
 
 def _patched_init(self, *args, **kwargs):
@@ -40,3 +49,4 @@ def _patched_init(self, *args, **kwargs):
 
 
 QApplication.__init__ = _patched_init
+QWidget.setParent = _patched_set_parent
