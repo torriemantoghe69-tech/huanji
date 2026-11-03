@@ -597,7 +597,7 @@ class MainWindow(QMainWindow):
         self.visible_rows = filtered
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         categories = self.category_names()
-        self.grid_columns = 5
+        self.grid_columns = 2
         for column in range(self.grid_columns):
             # 忽略卡片内容的自然宽度，由网格把可用空间平均分给两列。
             self.grid.setColumnMinimumWidth(column, 1)
