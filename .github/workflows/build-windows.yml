@@ -19,7 +19,34 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
       - name: Build single diagnostic executable
-        run: pyinstaller --noconfirm --onefile --console --name HuanjingWallpaperGallery-Diagnostic --collect-all PySide6 main.py
+        run: >
+          pyinstaller --noconfirm --clean --onefile --console
+          --name HuanjingWallpaperGallery-Diagnostic
+          --exclude-module PySide6.Qt3DCore
+          --exclude-module PySide6.Qt3DRender
+          --exclude-module PySide6.Qt3DInput
+          --exclude-module PySide6.QtCharts
+          --exclude-module PySide6.QtDataVisualization
+          --exclude-module PySide6.QtGraphs
+          --exclude-module PySide6.QtMultimedia
+          --exclude-module PySide6.QtMultimediaWidgets
+          --exclude-module PySide6.QtNetworkAuth
+          --exclude-module PySide6.QtPdf
+          --exclude-module PySide6.QtPdfWidgets
+          --exclude-module PySide6.QtQuick
+          --exclude-module PySide6.QtQuickWidgets
+          --exclude-module PySide6.QtQml
+          --exclude-module PySide6.QtRemoteObjects
+          --exclude-module PySide6.QtScxml
+          --exclude-module PySide6.QtSensors
+          --exclude-module PySide6.QtSerialPort
+          --exclude-module PySide6.QtSpatialAudio
+          --exclude-module PySide6.QtTest
+          --exclude-module PySide6.QtWebChannel
+          --exclude-module PySide6.QtWebEngineCore
+          --exclude-module PySide6.QtWebEngineWidgets
+          --exclude-module PySide6.QtWebEngineQuick
+          main.py
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
