@@ -388,13 +388,13 @@ class WallpaperCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 6)
         layout.setSpacing(4)
-        cover_host = QWidget()
+        cover_host = QWidget(self)
         cover_host.setObjectName("CardCoverHost")
         cover_host.setFixedHeight(240)
         cover_layout = QHBoxLayout(cover_host)
         cover_layout.setContentsMargins(0, 0, 0, 0)
         cover_layout.setSpacing(0)
-        cover = QLabel()
+        cover = QLabel(cover_host)
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover.setFixedHeight(240)
         cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -703,7 +703,7 @@ class MainWindow(QMainWindow):
             self.grid.removeWidget(card)
             card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             card.hide()
-            card.setParent(None)
+            # 保留父子关系，避免 setParent(None) 将卡片短暂变成独立顶层窗口。
             card.deleteLater()
         self._wallpaper_cards.clear()
         while self.grid.count():
@@ -759,7 +759,8 @@ class MainWindow(QMainWindow):
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
                 self.delete_image, self.rename_image, self.move_category,
                 self.set_wallpaper, self._card_categories,
-                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
+                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected,
+                parent=self.grid_host
             )
             card.setMinimumWidth(0)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
