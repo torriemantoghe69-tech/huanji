@@ -297,7 +297,8 @@ class PreviewDialog(QDialog):
                 self.image.setText("无法读取这张图片")
             return
         self._image_cache[key] = image
-        self._image_cache.move_to_end(key)        while len(self._image_cache) > self._image_cache_limit:
+        self._image_cache.move_to_end(key)
+        while len(self._image_cache) > self._image_cache_limit:
             self._image_cache.popitem(last=False)
         if key == self._current_key:
             self.image.setText("")
