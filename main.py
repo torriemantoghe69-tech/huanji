@@ -701,7 +701,6 @@ class MainWindow(QMainWindow):
             self.grid.removeWidget(card)
             card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             card.hide()
-            card.setParent(None)
             card.deleteLater()
         self._wallpaper_cards.clear()
         while self.grid.count():
