@@ -838,18 +838,30 @@ class MainWindow(QMainWindow):
 
 
     def _refresh_categories(self, rows=None):
+        # 系统分类必须始终显示；数据库中只保存自定义分类，不能只展示数据库内容。
+        system_names = ["全部壁纸", "横屏壁纸", "竖屏壁纸", "未分类", "我的收藏"]
         with sqlite3.connect(DB_PATH) as db:
             saved = {r[0] for r in db.execute("SELECT name FROM categories").fetchall()}
-        names = sorted(saved | {r[3] for r in (rows or self.rows()) if r[3] not in ("未分类", "")})
-        current = self.categories.currentItem().text() if self.categories.currentItem() else None
+        custom = {
+            r[3] for r in (rows if rows is not None else self.rows())
+            if r[3] not in ("", "未分类") and r[3] not in system_names
+        }
+        names = system_names + sorted((saved | custom) - set(system_names))
+        current = self.current_category
+        selected = self.categories.currentItem().text() if self.categories.currentItem() else None
+        if selected in names:
+            current = selected
+        if current not in names:
+            current = "全部壁纸"
         self.categories.blockSignals(True)
         self.categories.clear()
         self.categories.addItems(names)
-        if current in names:
-            matches = self.categories.findItems(current, Qt.MatchFlag.MatchExactly)
-            if matches:
-                self.categories.setCurrentItem(matches[0])
+        matches = self.categories.findItems(current, Qt.MatchFlag.MatchExactly)
+        if matches:
+            self.categories.setCurrentItem(matches[0])
         self.categories.blockSignals(False)
+        self.current_category = current
+        self.show_favorites = current == "我的收藏"
 
     def change_category(self, name):
         if not name:
