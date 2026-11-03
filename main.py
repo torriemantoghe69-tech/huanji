@@ -458,7 +458,6 @@ class WallpaperCard(QFrame):
         # 横屏图片仍使用整行宽度；两种图片的预览高度保持一致。
         self.cover.setFixedHeight(240)
         if pix.height() > pix.width():
-            # 竖屏：外层卡片不再画整列边框，只给实际图片区域绘制边框。
             self.setProperty("portrait", True)
             self.cover_host.setProperty("portrait", True)
             self.style().unpolish(self)
@@ -730,7 +729,7 @@ class MainWindow(QMainWindow):
             self.grid.removeWidget(card)
             card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             card.hide()
-            # 保留父子关系，避免 setParent(None) 将卡片短暂变成独立顶层窗口。
+            card.setParent(None)
             card.deleteLater()
         self._wallpaper_cards.clear()
         while self.grid.count():
@@ -952,190 +951,119 @@ class MainWindow(QMainWindow):
             with sqlite3.connect(DB_PATH) as db:
                 db.execute("INSERT OR IGNORE INTO source_folders(path) VALUES(?)", (folder_path,))
             self._import_paths([folder_path])
+            self.refresh_source_folders()
 
     def refresh_source_folders(self):
         with sqlite3.connect(DB_PATH) as db:
-            folders = [row[0] for row in db.execute("SELECT path FROM source_folders ORDER BY added_at, path")]
+            folders = [row[0] for row in db.execute("SELECT path FROM source_folders ORDER BY added_at DESC").fetchall()]
         if not folders:
             QMessageBox.information(self, "刷新文件夹", "还没有记录导入过的文件夹。请先点击“导入文件夹”选择一次。")
             return
-        existing = [path for path in folders if Path(path).is_dir()]
-        missing = [path for path in folders if not Path(path).is_dir()]
-        if not existing:
+        missing = [folder for folder in folders if not Path(folder).exists()]
+        if len(missing) == len(folders):
             QMessageBox.warning(self, "刷新文件夹", "之前导入的文件夹都找不到了，请重新选择文件夹导入。")
             return
-        self._import_paths(existing, show_result=False)
+        for folder in folders:
+            if Path(folder).exists():
+                self._import_paths([folder], refresh_mode=True)
         if missing:
             QMessageBox.warning(self, "部分文件夹无法访问",
-                                "以下文件夹不存在或无法访问：\n" + "\n".join(missing[:5]))
-        self.statusBar().showMessage("文件夹扫描完成", 5000)
+                                "以下文件夹目前不可访问，已跳过刷新：\n" + "\n".join(missing[:5]))
+        self.refresh()
 
-    def _import_paths(self, files, show_result=True):
-        # Accept individual images and folders, including folders dropped onto the window.
-        candidates = []
-        seen = set()
-        for item in files:
-            path = Path(item)
-            if path.is_dir():
-                candidates.extend(p for p in path.rglob("*") if p.is_file())
-            elif path.is_file():
-                candidates.append(path)
-
-        added = 0
-        skipped = 0
+    def _import_paths(self, paths, refresh_mode=False):
+        valid = []
         errors = []
+        for path in paths:
+            p = Path(path)
+            if p.is_dir():
+                for file in sorted(p.rglob("*")):
+                    if file.suffix.lower() in SUPPORTED:
+                        valid.append(file)
+            elif p.suffix.lower() in SUPPORTED and p.is_file():
+                valid.append(p)
+            else:
+                errors.append(f"不支持的路径：{path}")
+        if not valid:
+            if errors and not refresh_mode:
+                QMessageBox.warning(self, "导入失败", "\n".join(errors[:5]))
+            return
+        added = 0
+        failed = []
         with sqlite3.connect(DB_PATH) as db:
-            for src in candidates:
-                if src.suffix.lower() not in SUPPORTED:
-                    continue
+            for src in valid:
                 try:
-                    resolved = str(src.resolve())
-                    if resolved in seen or IMAGE_DIR.resolve() in src.resolve().parents:
-                        continue
-                    seen.add(resolved)
-                    if db.execute("SELECT 1 FROM wallpapers WHERE source_path=?", (resolved,)).fetchone():
-                        skipped += 1
-                        continue
-                    uid = uuid.uuid4().hex
-                    filename = uid + src.suffix.lower()
-                    shutil.copy2(src, IMAGE_DIR / filename)
+                    uid = str(uuid.uuid4())
+                    ext = src.suffix.lower() or ".png"
+                    dest = IMAGE_DIR / f"{uid}{ext}"
+                    if not dest.exists():
+                        shutil.copy2(src, dest)
                     db.execute(
-                        "INSERT INTO wallpapers(id,filename,title,source_path) VALUES(?,?,?,?)",
-                        (uid, filename, src.stem, resolved)
+                        "INSERT OR REPLACE INTO wallpapers(id, filename, title, category, favorite, source_path) VALUES(?,?,?,?,?,?)",
+                        (uid, dest.name, src.stem, "未分类", 0, str(src.resolve()))
                     )
                     added += 1
-                except (OSError, sqlite3.Error) as exc:
-                    errors.append(f"{src.name}: {exc}")
-
+                except Exception as exc:
+                    failed.append(f"{src.name}: {exc}")
         self.refresh()
-        if added:
-            self.statusBar().showMessage(f"新增导入 {added} 张图片", 5000)
-        elif show_result:
-            self.statusBar().showMessage(f"没有发现新图片（已跳过 {skipped} 张重复图片）", 5000)
+        msg = f"已导入/更新 {added} 张壁纸。"
         if errors:
-            preview = "\n".join(errors[:8])
-            if len(errors) > 8:
-                preview += f"\n另有 {len(errors) - 8} 个文件导入失败。"
+            msg += f"\n{len(errors)} 个路径被跳过。"
+        if failed:
+            msg += f"\n{len(failed)} 个文件导入失败。"
+            msg += "\n" + "\n".join(failed[:8])
+        self.statusBar().showMessage(msg, 6000)
+        if failed:
+            preview = "\n".join(failed[:8])
+            if len(failed) > 8:
+                preview += f"\n另有 {len(failed) - 8} 个文件导入失败。"
             QMessageBox.warning(self, "部分文件导入失败", preview)
 
     def open_preview(self, row):
-        rows = getattr(self, "visible_rows", [])
+        rows = self.visible_rows if hasattr(self, "visible_rows") else self.rows()
+        ids = [r[0] for r in rows]
         try:
-            index = next(i for i, item in enumerate(rows) if item[0] == row[0])
-        except StopIteration:
-            rows = [row]
+            index = ids.index(row[0])
+        except ValueError:
             index = 0
         dlg = PreviewDialog(rows, index, self)
         dlg.exec()
 
-    def toggle_favorite(self, uid, value):
-        with sqlite3.connect(DB_PATH) as db:
-            db.execute("UPDATE wallpapers SET favorite=? WHERE id=?", (0 if value else 1, uid))
-        self.refresh()
-
-    def category_names(self):
-        with sqlite3.connect(DB_PATH) as db:
-            saved = {r[0] for r in db.execute("SELECT name FROM categories").fetchall()}
-        return sorted(saved | {r[3] for r in self.rows() if r[3] not in ("未分类", "")})
-
     def rename_image(self, uid, old_title):
         title, ok = QInputDialog.getText(self, "重命名壁纸", "新名称：", text=old_title)
         title = title.strip()
-        if ok and title:
-            with sqlite3.connect(DB_PATH) as db:
-                db.execute("UPDATE wallpapers SET title=? WHERE id=?", (title, uid))
-            self.refresh()
+        if not ok or not title:
+            return
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("UPDATE wallpapers SET title=? WHERE id=?", (title, uid))
+        self.refresh()
 
     def move_category(self, uid, category):
         with sqlite3.connect(DB_PATH) as db:
             db.execute("UPDATE wallpapers SET category=? WHERE id=?", (category, uid))
         self.refresh()
 
+    def toggle_favorite(self, uid, favorite):
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("UPDATE wallpapers SET favorite=? WHERE id=?", (0 if favorite else 1, uid))
+        self.refresh()
+
     def set_wallpaper(self, filename):
         if sys.platform != "win32":
             QMessageBox.information(self, "设置壁纸", "一键设置桌面壁纸目前仅支持 Windows。")
             return
-        image_path = str(IMAGE_DIR / filename)
+        path = IMAGE_DIR / filename
         SPI_SETDESKWALLPAPER = 20
-        SPIF_UPDATEINIFILE = 0x01
-        SPIF_SENDCHANGE = 0x02
         try:
-            system_parameters_info = ctypes.windll.user32.SystemParametersInfoW
-            system_parameters_info.argtypes = [
-                ctypes.c_uint, ctypes.c_uint, ctypes.c_wchar_p, ctypes.c_uint
-            ]
-            system_parameters_info.restype = ctypes.c_bool
-            result = system_parameters_info(
-                SPI_SETDESKWALLPAPER, 0, image_path, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
-            )
-            if result:
-                self.statusBar().showMessage("桌面壁纸设置成功", 4000)
-            else:
-                raise OSError("Windows 未能应用这张图片")
+            ctypes.windll.user32.SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, str(path), 3)
+            self.statusBar().showMessage("已设置为桌面壁纸", 3000)
         except Exception as exc:
             QMessageBox.warning(self, "设置失败", str(exc))
 
-    def _remove_wallpaper_ids(self, ids):
-        ids = list(set(ids))
-        if not ids:
-            return 0
+    def category_names(self):
         with sqlite3.connect(DB_PATH) as db:
-            placeholders = ",".join("?" for _ in ids)
-            rows = db.execute(
-                f"SELECT id, filename FROM wallpapers WHERE id IN ({placeholders})", ids
-            ).fetchall()
-            db.execute(f"DELETE FROM wallpapers WHERE id IN ({placeholders})", ids)
-        for _, filename in rows:
-            try:
-                (IMAGE_DIR / filename).unlink(missing_ok=True)
-            except OSError:
-                logging.warning("Could not remove managed image copy: %s", filename)
-            for cached in THUMB_DIR.glob(f"{Path(filename).stem}_*.jpg"):
-                try:
-                    cached.unlink(missing_ok=True)
-                except OSError:
-                    logging.warning("Could not remove thumbnail cache: %s", cached)
-        self.selected_ids.difference_update(ids)
-        self.refresh()
-        return len(rows)
-
-    def on_card_selected(self, uid, checked):
-        if checked:
-            self.selected_ids.add(uid)
-        else:
-            self.selected_ids.discard(uid)
-        self.statusBar().showMessage(f"已选择 {len(self.selected_ids)} 张壁纸", 2500)
-
-    def select_all_visible(self):
-        if not self.selection_mode:
-            self.selection_mode = True
-            self.select_mode_btn.setText("完成选择")
-        # 全选当前筛选列表（包含其他分页），但只更新当前页已显示的卡片控件。
-        self.selected_ids.update(row[0] for row in self.visible_rows)
-        for index, card in self._wallpaper_cards.items():
-            if index < len(self.page_rows):
-                card.set_selection_state(True, self.page_rows[index][0] in self.selected_ids)
-        self.count_label.setText(
-            f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
-        )
-        self.statusBar().showMessage(f"已全选当前列表 {len(self.selected_ids)} 张壁纸", 3000)
-
-    def toggle_selection_mode(self):
-        self.selection_mode = not self.selection_mode
-        # “完成选择”只退出勾选界面，不清空已选 ID。
-        # 保留跨分页选择结果，供“删除已选”等后续操作使用。
-        self.select_mode_btn.setText("完成选择" if self.selection_mode else "批量选择")
-        for index, card in self._wallpaper_cards.items():
-            selected = self.page_rows[index][0] in self.selected_ids if index < len(self.page_rows) else False
-            card.set_selection_state(self.selection_mode, selected)
-        if self.selection_mode:
-            self.count_label.setText(
-                f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
-            )
-        else:
-            self.count_label.setText(
-                f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已保留选择 {len(self.selected_ids)} 张"
-            )
+            rows = db.execute("SELECT name FROM categories ORDER BY name COLLATE NOCASE").fetchall()
+        return [row[0] for row in rows]
 
     def delete_selected_images(self):
         count = len(self.selected_ids)
