@@ -8,9 +8,11 @@ menus alone.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QEvent, QTimer
-from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog, QPushButton
+from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog, QPushButton, QMainWindow, QScrollArea
 
 TARGET_BUTTON_TEXTS = {"批量选择", "全选当前列表"}
+MAIN_WINDOW_TITLE = "幻境壁纸馆"
+PREVIEW_WINDOW_TITLE = "图片预览"
 
 
 class _BlankPopupGuard(QObject):
@@ -24,6 +26,11 @@ class _BlankPopupGuard(QObject):
         QEvent.Type.UpdateRequest,
         QEvent.Type.WindowActivate,
     }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._toolbar_buttons_pruned = False
+        self._saved_scroll_value = None
 
     def _is_blank_top_level(self, watched: QWidget) -> bool:
         if isinstance(watched, (QMenu, QDialog)):
@@ -43,23 +50,65 @@ class _BlankPopupGuard(QObject):
             # Widget may already be gone by the time the deferred check runs.
             return
 
+    def _main_scroll_bar(self):
+        app = QApplication.instance()
+        if app is None:
+            return None
+        for widget in app.topLevelWidgets():
+            if isinstance(widget, QMainWindow) and widget.windowTitle().strip() == MAIN_WINDOW_TITLE:
+                for area in widget.findChildren(QScrollArea):
+                    bar = area.verticalScrollBar()
+                    if bar is not None:
+                        return bar
+        return None
+
+    def _capture_main_scroll(self) -> None:
+        bar = self._main_scroll_bar()
+        if bar is not None:
+            self._saved_scroll_value = bar.value()
+
+    def _restore_main_scroll(self) -> None:
+        if self._saved_scroll_value is None:
+            return
+        bar = self._main_scroll_bar()
+        if bar is None:
+            return
+        value = self._saved_scroll_value
+        self._saved_scroll_value = None
+        QTimer.singleShot(0, lambda b=bar, v=value: b.setValue(v))
+
     def _prune_toolbar_buttons(self) -> None:
+        if self._toolbar_buttons_pruned:
+            return
         app = QApplication.instance()
         if app is None:
             return
+        removed = False
         for widget in app.allWidgets():
             if isinstance(widget, QPushButton) and widget.text().strip() in TARGET_BUTTON_TEXTS:
                 widget.hide()
+                widget.setEnabled(False)
+                widget.deleteLater()
+                removed = True
+        if removed:
+            self._toolbar_buttons_pruned = True
 
     def eventFilter(self, watched, event):
         if not isinstance(watched, QWidget):
             return False
 
+        title = watched.windowTitle().strip()
+
         if event.type() in self._CHECK_EVENTS:
             QTimer.singleShot(0, self._prune_toolbar_buttons)
+            if title == PREVIEW_WINDOW_TITLE:
+                QTimer.singleShot(0, self._capture_main_scroll)
             if self._is_blank_top_level(watched):
                 # Defer one tick so size/flags settle before we judge it.
                 QTimer.singleShot(0, lambda w=watched: self._hide_if_blank(w))
+
+        if title == PREVIEW_WINDOW_TITLE and event.type() in (QEvent.Type.Hide, QEvent.Type.Close):
+            self._restore_main_scroll()
 
         if event.type() == QEvent.Type.Show and self._is_blank_top_level(watched):
             watched.hide()
