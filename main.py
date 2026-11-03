@@ -204,7 +204,7 @@ class PreviewDialog(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "rows"):
+        if hasattr(self, "image") and hasattr(self, "position_label"):
             self.show_current()
 
 class WallpaperCard(QFrame):
