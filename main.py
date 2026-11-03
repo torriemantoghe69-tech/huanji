@@ -1092,8 +1092,8 @@ class MainWindow(QMainWindow):
 
     def toggle_selection_mode(self):
         self.selection_mode = not self.selection_mode
-        if not self.selection_mode:
-            self.selected_ids.clear()
+        # “完成选择”只退出勾选界面，不清空已选 ID。
+        # 保留跨分页选择结果，供“删除已选”等后续操作使用。
         self.select_mode_btn.setText("完成选择" if self.selection_mode else "批量选择")
         for index, card in self._wallpaper_cards.items():
             selected = self.page_rows[index][0] in self.selected_ids if index < len(self.page_rows) else False
@@ -1101,6 +1101,10 @@ class MainWindow(QMainWindow):
         if self.selection_mode:
             self.count_label.setText(
                 f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
+            )
+        else:
+            self.count_label.setText(
+                f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已保留选择 {len(self.selected_ids)} 张"
             )
 
     def delete_selected_images(self):
