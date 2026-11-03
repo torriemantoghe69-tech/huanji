@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve, QObject
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -550,7 +550,6 @@ class MainWindow(QMainWindow):
         folder_btn.clicked.connect(self.import_folder)
         header.addWidget(folder_btn)
         self.refresh_folders_btn = QPushButton("↻ 刷新文件夹")
-        self.refresh_folders_btn.setToolTip("重新扫描之前导入过的文件夹，只添加新图片，不重复导入")
         self.refresh_folders_btn.clicked.connect(self.refresh_source_folders)
         header.addWidget(self.refresh_folders_btn)
         self.select_mode_btn = QPushButton("批量选择")
@@ -560,7 +559,6 @@ class MainWindow(QMainWindow):
         self.select_all_btn.clicked.connect(self.select_all_visible)
         header.addWidget(self.select_all_btn)
         self.delete_folder_btn = QPushButton("删除文件夹壁纸")
-        self.delete_folder_btn.setToolTip("从壁纸馆批量移除所选文件夹导入的壁纸，不删除原始图片")
         self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
         header.addWidget(self.delete_folder_btn)
         self.delete_selected_btn = QPushButton("删除已选")
@@ -995,8 +993,20 @@ class MainWindow(QMainWindow):
             return
         self._remove_wallpaper_ids([uid])
 
+class NoToolTipFilter(QObject):
+    """阻止 Qt 工具提示窗口弹出，避免滚动或鼠标停留时出现闪烁小窗。"""
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.ToolTip:
+            event.ignore()
+            return True
+        return super().eventFilter(watched, event)
+
+
 def main():
     app = QApplication(sys.argv)
+    # 全局拦截工具提示事件；不影响文件选择对话框、菜单和正常操作。
+    app._no_tooltip_filter = NoToolTipFilter(app)
+    app.installEventFilter(app._no_tooltip_filter)
     app.setStyle("Fusion")
     app.setStyleSheet(DARK_STYLE)
     from PySide6.QtCore import qInstallMessageHandler
