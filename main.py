@@ -811,6 +811,7 @@ class MainWindow(QMainWindow):
             )
             card.setMinimumWidth(0)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            card.setFixedWidth(self._card_column_width())
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
 
@@ -823,6 +824,33 @@ class MainWindow(QMainWindow):
         self.scroll.verticalScrollBar().setValue(0)
         self.grid_host.setUpdatesEnabled(True)
         self.grid_host.update()
+        QTimer.singleShot(0, self._apply_card_column_widths)
+
+    def _card_column_width(self):
+        # 两列始终各占一半可用宽度；即使最后一页只有一张图，也不允许该卡片铺满整行。
+        if not hasattr(self, "scroll") or not hasattr(self, "grid"):
+            return 280
+        margins = self.grid.contentsMargins()
+        available = self.scroll.viewport().width()
+        spacing = self.grid.horizontalSpacing()
+        usable = max(560, available - margins.left() - margins.right() - spacing)
+        return max(280, usable // 2)
+
+    def _apply_card_column_widths(self):
+        if not hasattr(self, "grid") or not hasattr(self, "scroll"):
+            return
+        width = self._card_column_width()
+        # 两列都保留相同的固定宽度约束，避免单张卡片所在列在翻页时被拉伸。
+        for column in range(2):
+            self.grid.setColumnMinimumWidth(column, width)
+            self.grid.setColumnStretch(column, 0)
+        for card in self._wallpaper_cards.values():
+            card.setFixedWidth(width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "grid"):
+            QTimer.singleShot(0, self._apply_card_column_widths)
 
     def _on_thumbnail_ready(self, generation, index, image_path):
         self._thumbnail_jobs.pop((generation, index), None)
@@ -889,6 +917,7 @@ class MainWindow(QMainWindow):
                     parent=self.grid_host
             )
             card.setMinimumWidth(0)
+            card.setFixedWidth(self._card_column_width())
             card.setFixedHeight(self._virtual_row_height)
             card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._wallpaper_cards[index] = card
