@@ -343,7 +343,7 @@ class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, selection_mode=False, selected=False, on_select=None, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
-        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(0)
         self.row = row
         self.image_path = str(image_path)
@@ -551,7 +551,9 @@ class MainWindow(QMainWindow):
         header.addWidget(self.theme_button)
         self.search = ChineseLineEdit()
         self.search.setPlaceholderText("搜索壁纸名称或分类…")
-        self.search.setFixedWidth(260)
+        self.search.setMinimumWidth(120)
+        self.search.setMaximumWidth(300)
+        self.search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.search.textChanged.connect(self.refresh)
         header.addWidget(self.search)
         import_btn = QPushButton("＋ 导入图片")
@@ -561,22 +563,27 @@ class MainWindow(QMainWindow):
         folder_btn = QPushButton("导入文件夹")
         folder_btn.clicked.connect(self.import_folder)
         header.addWidget(folder_btn)
+        content.addLayout(header)
+
+        # 将管理操作独立放到第二行，避免顶部工具栏撑大窗口最小宽度。
+        actions = QHBoxLayout()
         self.refresh_folders_btn = QPushButton("↻ 刷新文件夹")
         self.refresh_folders_btn.clicked.connect(self.refresh_source_folders)
-        header.addWidget(self.refresh_folders_btn)
+        actions.addWidget(self.refresh_folders_btn)
         self.select_mode_btn = QPushButton("批量选择")
         self.select_mode_btn.clicked.connect(self.toggle_selection_mode)
-        header.addWidget(self.select_mode_btn)
+        actions.addWidget(self.select_mode_btn)
         self.select_all_btn = QPushButton("全选当前列表")
         self.select_all_btn.clicked.connect(self.select_all_visible)
-        header.addWidget(self.select_all_btn)
+        actions.addWidget(self.select_all_btn)
         self.delete_folder_btn = QPushButton("删除文件夹壁纸")
         self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
-        header.addWidget(self.delete_folder_btn)
+        actions.addWidget(self.delete_folder_btn)
         self.delete_selected_btn = QPushButton("删除已选")
         self.delete_selected_btn.clicked.connect(self.delete_selected_images)
-        header.addWidget(self.delete_selected_btn)
-        content.addLayout(header)
+        actions.addWidget(self.delete_selected_btn)
+        actions.addStretch()
+        content.addLayout(actions)
 
         # 分页工具栏：默认每页 4 张，支持调整每页容量。
         pagination = QHBoxLayout()
@@ -604,7 +611,7 @@ class MainWindow(QMainWindow):
         self.grid_host = QWidget()
         self.grid = QGridLayout(self.grid_host)
         self.grid.setContentsMargins(0, 8, 0, 8)
-        self.grid.setHorizontalSpacing(8)
+        self.grid.setHorizontalSpacing(14)
         self.grid.setVerticalSpacing(8)
         self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -672,11 +679,11 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  当前第 {self.current_page + 1} 页")
 
         self.grid_columns = 2
-        self.grid.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)
         for column in range(self.grid_columns):
-            # 两列使用相同固定宽度，保持每行左右卡片一致。
+            # 两列平均分配整个内容宽度，卡片随窗口横向伸缩。
             self.grid.setColumnMinimumWidth(column, 280)
-            self.grid.setColumnStretch(column, 0)
+            self.grid.setColumnStretch(column, 1)
         self._card_categories = self.category_names()
         self.selected_ids.intersection_update(row[0] for row in filtered)
 
@@ -692,7 +699,9 @@ class MainWindow(QMainWindow):
                 self.set_wallpaper, self._card_categories,
                 self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
             )
-            card.setFixedSize(280, self._card_row_height)
+            card.setMinimumWidth(0)
+            card.setFixedHeight(self._card_row_height)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
             thumbnail = self.thumbnail_for(row[1])
@@ -757,7 +766,9 @@ class MainWindow(QMainWindow):
                 self.set_wallpaper, self._card_categories,
                 self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
             )
-            card.setFixedSize(280, self._virtual_row_height)
+            card.setMinimumWidth(0)
+            card.setFixedHeight(self._virtual_row_height)
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // columns, index % columns)
             thumbnail = self.thumbnail_for(row[1])
