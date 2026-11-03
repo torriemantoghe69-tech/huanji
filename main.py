@@ -475,7 +475,7 @@ class MainWindow(QMainWindow):
             self.grid_host.mapFrom(viewport, QPoint(0, 0)), viewport.size()
         ).adjusted(0, -180, 0, 180)
         for card in self._wallpaper_cards:
-            if card.cover.pixmap() is None and card.geometry().intersects(visible_rect):
+            if card.cover.pixmap().isNull() and card.geometry().intersects(visible_rect):
                 thumbnail = self.thumbnail_for(Path(card.image_path).name)
                 card.image_path = str(thumbnail or card.image_path)
                 card.load_thumbnail()
