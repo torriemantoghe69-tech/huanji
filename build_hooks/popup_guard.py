@@ -139,3 +139,76 @@ def _patched_init(self, *args, **kwargs):
 
 QApplication.__init__ = _patched_init
 QWidget.setParent = _patched_set_parent
+
+
+# Keep preview decoding independent from the temporary dialog size.  The
+# image is decoded once to a generous common bound and then fitted to the
+# current QLabel area, so portrait and landscape files use the same rule.
+def _install_preview_scaling_patch():
+    import builtins
+    import sys
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPixmap
+
+    original_import = builtins.__import__
+    installed = {"done": False}
+
+    def _patch(app):
+        if installed["done"] or not hasattr(app, "PreviewDialog"):
+            return
+        dialog = app.PreviewDialog
+        original_cache_key = dialog._cache_key
+        original_show_current = dialog.show_current
+        original_loaded = dialog._on_image_loaded
+
+        def stable_cache_key(self, index, target=None):
+            path = str(app.IMAGE_DIR / self.rows[index][1])
+            return (path, 2560, 2560)
+
+        def display_cached_image(self, image):
+            if image is None or image.isNull():
+                self.image.setPixmap(QPixmap())
+                return
+            area = self.image.contentsRect().size()
+            if area.width() < 1 or area.height() < 1:
+                return
+            pixmap = QPixmap.fromImage(image)
+            fitted = pixmap.scaled(
+                area,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.image.setText("")
+            self.image.setPixmap(fitted)
+
+        def stable_show_current(self):
+            original_show_current(self)
+            key = getattr(self, "_current_key", None)
+            image = self._image_cache.get(key) if key is not None else None
+            if image is not None:
+                display_cached_image(self, image)
+            else:
+                # Never leave the previous wallpaper visible at a different scale.
+                self.image.setPixmap(QPixmap())
+
+        def stable_image_loaded(self, key, image):
+            original_loaded(self, key, image)
+            if key == getattr(self, "_current_key", None) and image is not None and not image.isNull():
+                display_cached_image(self, image)
+
+        dialog._cache_key = stable_cache_key
+        dialog.show_current = stable_show_current
+        dialog._on_image_loaded = stable_image_loaded
+        installed["done"] = True
+
+    def _import_with_preview_patch(name, globals=None, locals=None, fromlist=(), level=0):
+        module = original_import(name, globals, locals, fromlist, level)
+        if name == "main":
+            target = sys.modules.get("main", module)
+            _patch(target)
+        return module
+
+    builtins.__import__ = _import_with_preview_patch
+
+
+_install_preview_scaling_patch()
