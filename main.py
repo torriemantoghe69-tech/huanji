@@ -600,7 +600,6 @@ class MainWindow(QMainWindow):
         self.next_page_btn.clicked.connect(lambda: self.change_page(1))
         pagination.addWidget(self.next_page_btn)
         pagination.addStretch()
-        content.addLayout(pagination)
 
         self.grid_host = QWidget()
         self.grid = QGridLayout(self.grid_host)
@@ -618,6 +617,8 @@ class MainWindow(QMainWindow):
         self._wallpaper_cards = {}
         self._card_row_height = 250
         content.addWidget(self.scroll, 1)
+        # 分页控件固定在内容区底部，不再占用缩略图上方空间。
+        content.addLayout(pagination)
         outer.addLayout(content, 1)
 
     def rows(self):
@@ -846,9 +847,16 @@ class MainWindow(QMainWindow):
         self._import_paths(files)
 
     def import_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "选择图片文件夹", str(Path.home()))
-        if folder:
-            folder_path = str(Path(folder).resolve())
+        # 使用 Qt 自绘目录选择器，避开 Windows 原生目录对话框偶发的空白闪窗。
+        dialog = QFileDialog(self, "选择图片文件夹", str(Path.home()))
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            selected = dialog.selectedFiles()
+            if not selected:
+                return
+            folder_path = str(Path(selected[0]).resolve())
             with sqlite3.connect(DB_PATH) as db:
                 db.execute("INSERT OR IGNORE INTO source_folders(path) VALUES(?)", (folder_path,))
             self._import_paths([folder_path])
