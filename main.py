@@ -560,6 +560,9 @@ class MainWindow(QMainWindow):
         self.delete_folder_btn.setToolTip("从壁纸馆批量移除所选文件夹导入的壁纸，不删除原始图片")
         self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
         header.addWidget(self.delete_folder_btn)
+        self.delete_selected_btn = QPushButton("删除已选")
+        self.delete_selected_btn.clicked.connect(self.delete_selected_images)
+        header.addWidget(self.delete_selected_btn)
         content.addLayout(header)
 
         self.grid_host = QWidget()
