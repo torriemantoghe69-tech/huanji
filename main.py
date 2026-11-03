@@ -556,6 +556,9 @@ class MainWindow(QMainWindow):
         self.select_mode_btn = QPushButton("批量选择")
         self.select_mode_btn.clicked.connect(self.toggle_selection_mode)
         header.addWidget(self.select_mode_btn)
+        self.select_all_btn = QPushButton("全选当前列表")
+        self.select_all_btn.clicked.connect(self.select_all_visible)
+        header.addWidget(self.select_all_btn)
         self.delete_folder_btn = QPushButton("删除文件夹壁纸")
         self.delete_folder_btn.setToolTip("从壁纸馆批量移除所选文件夹导入的壁纸，不删除原始图片")
         self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
@@ -922,6 +925,14 @@ class MainWindow(QMainWindow):
             self.selected_ids.discard(uid)
         self.statusBar().showMessage(f"已选择 {len(self.selected_ids)} 张壁纸", 2500)
 
+    def select_all_visible(self):
+        if not self.selection_mode:
+            self.selection_mode = True
+            self.select_mode_btn.setText("完成选择")
+        self.selected_ids.update(row[0] for row in self.visible_rows)
+        self.refresh()
+        self.statusBar().showMessage(f"已全选当前列表 {len(self.selected_ids)} 张壁纸", 3000)
+
     def toggle_selection_mode(self):
         self.selection_mode = not self.selection_mode
         if not self.selection_mode:
@@ -978,7 +989,7 @@ class MainWindow(QMainWindow):
     def delete_image(self, uid):
         answer = QMessageBox.question(
             self, "从壁纸馆移除",
-            "确定从壁纸馆移除这张壁纸吗？\\n\\n"
+            "确定从壁纸馆移除这张壁纸吗？\n\n"
             "只会移除软件内的记录和软件自己的副本，"
             "不会删除导入时所在文件夹中的原始图片。"
         )
