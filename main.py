@@ -394,7 +394,8 @@ class MainWindow(QMainWindow):
         self.current_category = "全部壁纸"
         self.show_favorites = False
         self.settings = QSettings("Huanjing", "WallpaperGallery")
-        self.theme = self.settings.value("theme", "dark")
+        saved_theme = self.settings.value("theme", "dark")
+        self.theme = saved_theme if saved_theme in ("light", "dark") else "dark"
         self._thumbnail_timer = QTimer(self)
         self._thumbnail_timer.setSingleShot(True)
         self._thumbnail_timer.setInterval(35)
@@ -404,15 +405,38 @@ class MainWindow(QMainWindow):
         self.refresh()
 
     def apply_theme(self):
+        # 从模块全局读取样式，避免主题切换引用到旧版本/缺失的局部变量。
         app = QApplication.instance()
-        app.setStyleSheet(LIGHT_STYLE if self.theme == "light" else DARK_STYLE)
+        if app is None:
+            raise RuntimeError("Qt application is not initialized")
+        light_style = globals().get(
+            "LIGHT_STYLE",
+            "QWidget { background:#f4f6fb; color:#202534; }"
+        )
+        dark_style = globals().get(
+            "DARK_STYLE",
+            "QWidget { background:#11131a; color:#edf0f7; }"
+        )
+        if self.theme not in ("light", "dark"):
+            self.theme = "dark"
+        app.setStyleSheet(light_style if self.theme == "light" else dark_style)
         app.setProperty("gallery_theme", self.theme)
         self.theme_button.setText("☀ 白天模式" if self.theme == "dark" else "🌙 夜间模式")
         self.settings.setValue("theme", self.theme)
+        logging.info("Theme applied: %s", self.theme)
 
     def toggle_theme(self):
-        self.theme = "light" if self.theme == "dark" else "dark"
-        self.apply_theme()
+        previous_theme = self.theme
+        self.theme = "light" if previous_theme == "dark" else "dark"
+        try:
+            self.apply_theme()
+        except Exception:
+            self.theme = previous_theme
+            logging.exception("Failed to switch theme")
+            QMessageBox.warning(
+                self, "主题切换失败",
+                f"切换主题时发生错误。程序已恢复原主题。\n日志位置：{LOG_PATH}"
+            )
 
     def _build_ui(self):
         root = QWidget()
