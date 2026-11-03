@@ -18,10 +18,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-      - name: Build single diagnostic executable
+      - name: Check Python syntax
+        run: python -m py_compile main.py
+      - name: Build windowed executable
         run: >
-          pyinstaller --noconfirm --clean --onefile --console
-          --name HuanjingWallpaperGallery-Diagnostic
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name HuanjingWallpaperGallery
           --exclude-module PySide6.Qt3DCore
           --exclude-module PySide6.Qt3DRender
           --exclude-module PySide6.Qt3DInput
@@ -47,9 +49,26 @@ jobs:
           --exclude-module PySide6.QtWebEngineWidgets
           --exclude-module PySide6.QtWebEngineQuick
           main.py
-      - name: Upload EXE
+      - name: Add diagnostic launcher
+        shell: pwsh
+        run: |
+          @'
+          @echo off
+          cd /d "%~dp0"
+          HuanjingWallpaperGallery.exe
+          set APP_EXIT=%errorlevel%
+          if not "%APP_EXIT%"=="0" (
+            echo.
+            echo The application exited with code %APP_EXIT%.
+            echo Check %%LOCALAPPDATA%%\HuanjingWallpaperGallery\crash.log
+            pause
+          )
+          '@ | Set-Content -Encoding ASCII dist\启动诊断.bat
+      - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: HuanjingWallpaperGallery-Windows
-          path: dist/HuanjingWallpaperGallery-Diagnostic.exe
+          path: |
+            dist/HuanjingWallpaperGallery.exe
+            dist/启动诊断.bat
           if-no-files-found: error
