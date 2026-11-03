@@ -638,7 +638,21 @@ class MainWindow(QMainWindow):
         self._virtual_row_height = 250
         self._virtual_overscan_rows = 1
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
+        # 首次刷新必须等主窗口真正显示、布局完成后再计算视口宽度。
+        # 否则第二次启动/系统缩放下可能读到尚未稳定的窄视口，
+        # 并把卡片固定成极窄宽度，导致第一页缩略图看起来特别小。
+        QTimer.singleShot(0, self._initial_refresh)
+        QTimer.singleShot(120, self._apply_card_column_widths)
+
+    def _initial_refresh(self):
+        if not self.isVisible():
+            QTimer.singleShot(80, self._initial_refresh)
+            return
+        self.ensurePolished()
+        self.centralWidget().layout().activate()
+        self.scroll.layout().activate() if self.scroll.layout() else None
         self.refresh()
+        QTimer.singleShot(80, self._apply_card_column_widths)
 
     def set_theme(self, mode):
         self.theme = mode if mode in ("light", "dark") else "dark"
@@ -837,7 +851,10 @@ class MainWindow(QMainWindow):
         self._card_categories = self.category_names()
 
         # 在创建/放入网格前先固定画布宽度和卡片宽度，避免显示后再二次缩放。
-        viewport_width = max(1, self.scroll.viewport().width())
+        viewport_width = self.scroll.viewport().width()
+        # 窗口尚未完成首次布局时不允许用 1px/异常窄宽度锁死网格。
+        if viewport_width < 500:
+            viewport_width = max(500, self.width() - 280)
         self.grid_host.setFixedWidth(viewport_width)
         card_width = self._card_column_width()
         active_ids = set()
@@ -906,7 +923,10 @@ class MainWindow(QMainWindow):
     def _apply_card_column_widths(self):
         if not hasattr(self, "grid") or not hasattr(self, "scroll"):
             return
-        viewport_width = max(1, self.scroll.viewport().width())
+        viewport_width = self.scroll.viewport().width()
+        # 视口尺寸尚未稳定时保留现有卡片宽度，等窗口完成布局后再统一计算。
+        if viewport_width < 500:
+            return
         # 内容画布始终与 viewport 等宽，避免 QScrollArea 按当前页内容重新估算宽度。
         self.grid_host.setFixedWidth(viewport_width)
         card_width = self._card_column_width()
