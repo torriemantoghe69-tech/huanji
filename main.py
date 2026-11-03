@@ -353,7 +353,7 @@ class WallpaperCard(QFrame):
         layout.setSpacing(4)
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setFixedHeight(108)
+        cover.setFixedHeight(190)
         cover.setObjectName("CardCover")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
@@ -403,7 +403,7 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        target_size = QSize(max(120, self.cover.width()), max(80, self.cover.height()))
+        target_size = QSize(300, 190)
         self.cover.setPixmap(pix.scaled(
             target_size, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
@@ -582,7 +582,7 @@ class MainWindow(QMainWindow):
         self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = {}
-        self._virtual_row_height = 174
+        self._virtual_row_height = 250
         self._virtual_overscan_rows = 3
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         content.addWidget(self.scroll, 1)
@@ -618,11 +618,12 @@ class MainWindow(QMainWindow):
         self.visible_rows = filtered
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         categories = self.category_names()
-        self.grid_columns = 6
+        self.grid_columns = 2
+        self.grid.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         for column in range(self.grid_columns):
-            # 忽略卡片内容的自然宽度，由网格把可用空间平均分给两列。
-            self.grid.setColumnMinimumWidth(column, 1)
-            self.grid.setColumnStretch(column, 1)
+            # 每行两张卡片，限制卡片宽度并居中，避免横向铺满导致缩略图过宽。
+            self.grid.setColumnMinimumWidth(column, 340)
+            self.grid.setColumnStretch(column, 0)
         self._card_categories = categories
         self.selected_ids.intersection_update(row[0] for row in filtered)
         self._virtual_row_count = (len(filtered) + self.grid_columns - 1) // self.grid_columns
@@ -672,7 +673,7 @@ class MainWindow(QMainWindow):
                 self.set_wallpaper, self._card_categories,
                 self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
             )
-            card.setFixedHeight(self._virtual_row_height)
+            card.setFixedSize(340, self._virtual_row_height)
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // columns, index % columns)
             thumbnail = self.thumbnail_for(row[1])
