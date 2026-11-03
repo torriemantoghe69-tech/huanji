@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
     QScrollArea, QGridLayout, QFrame, QMessageBox, QDialog, QInputDialog,
-    QMenu, QSizePolicy
+    QMenu, QSizePolicy, QTimer
 )
 
 APP_NAME = "幻境壁纸馆"
@@ -277,6 +277,22 @@ class PreviewDialog(QDialog):
         if hasattr(self, "image") and hasattr(self, "position_label"):
             self.show_current()
 
+class SmoothScrollArea(QScrollArea):
+    """使用小步长像素滚动，减少鼠标滚轮上下滚动的跳跃感。"""
+    def wheelEvent(self, event):
+        bar = self.verticalScrollBar()
+        pixel_delta = event.pixelDelta().y()
+        if pixel_delta:
+            delta = pixel_delta
+        else:
+            delta = event.angleDelta().y() / 120.0 * 42
+        if delta:
+            bar.setValue(bar.value() - int(delta))
+            event.accept()
+        else:
+            super().wheelEvent(event)
+
+
 class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
         super().__init__(parent)
@@ -299,7 +315,7 @@ class WallpaperCard(QFrame):
         layout.setSpacing(4)
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setFixedHeight(138)
+        cover.setFixedHeight(190)
         cover.setStyleSheet("background:#0e1016;border-radius:9px;")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
@@ -344,7 +360,7 @@ class WallpaperCard(QFrame):
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
         self.cover.setPixmap(pix.scaled(
-            QSize(220, 132), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            QSize(360, 190), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation
         ))
 
@@ -379,6 +395,10 @@ class MainWindow(QMainWindow):
         self.show_favorites = False
         self.settings = QSettings("Huanjing", "WallpaperGallery")
         self.theme = self.settings.value("theme", "dark")
+        self._thumbnail_timer = QTimer(self)
+        self._thumbnail_timer.setSingleShot(True)
+        self._thumbnail_timer.setInterval(35)
+        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
         self._build_ui()
         self.apply_theme()
         self.refresh()
@@ -465,11 +485,12 @@ class MainWindow(QMainWindow):
         self.grid.setContentsMargins(0, 8, 0, 8)
         self.grid.setHorizontalSpacing(8)
         self.grid.setVerticalSpacing(8)
-        self.scroll = QScrollArea()
+        self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
+        self.scroll.verticalScrollBar().setSingleStep(24)
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = []
-        self.scroll.verticalScrollBar().valueChanged.connect(self.load_visible_thumbnails)
+        self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         content.addWidget(self.scroll, 1)
         outer.addLayout(content, 1)
 
@@ -508,6 +529,11 @@ class MainWindow(QMainWindow):
         self.grid.setRowStretch((len(filtered) + self.grid_columns - 1) // self.grid_columns, 1)
         self._refresh_categories(rows)
         self.load_visible_thumbnails()
+
+    def schedule_visible_thumbnails(self, *_):
+        # 滚动过程中合并重复加载请求，避免解码缩略图抢占滚动事件。
+        if hasattr(self, "_thumbnail_timer"):
+            self._thumbnail_timer.start()
 
     def load_visible_thumbnails(self):
         if not hasattr(self, "_wallpaper_cards") or not self._wallpaper_cards:
