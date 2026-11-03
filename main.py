@@ -415,6 +415,14 @@ class WallpaperCard(QFrame):
             Qt.TransformationMode.SmoothTransformation
         ))
 
+    def set_selection_state(self, selection_mode, selected=None):
+        """更新现有卡片的选择控件，不重建卡片或其子窗口。"""
+        self.select_box.setVisible(selection_mode)
+        if selected is not None:
+            self.select_box.blockSignals(True)
+            self.select_box.setChecked(bool(selected))
+            self.select_box.blockSignals(False)
+
     def show_menu(self, button, on_delete, on_rename, on_category, on_wallpaper, categories):
         menu = QMenu(self)
         rename = menu.addAction("重命名")
@@ -1002,8 +1010,14 @@ class MainWindow(QMainWindow):
         if not self.selection_mode:
             self.selection_mode = True
             self.select_mode_btn.setText("完成选择")
+        # 全选当前筛选列表（包含其他分页），但只更新当前页已显示的卡片控件。
         self.selected_ids.update(row[0] for row in self.visible_rows)
-        self.refresh()
+        for index, card in self._wallpaper_cards.items():
+            if index < len(self.page_rows):
+                card.set_selection_state(True, self.page_rows[index][0] in self.selected_ids)
+        self.count_label.setText(
+            f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
+        )
         self.statusBar().showMessage(f"已全选当前列表 {len(self.selected_ids)} 张壁纸", 3000)
 
     def toggle_selection_mode(self):
@@ -1011,7 +1025,13 @@ class MainWindow(QMainWindow):
         if not self.selection_mode:
             self.selected_ids.clear()
         self.select_mode_btn.setText("完成选择" if self.selection_mode else "批量选择")
-        self.refresh()
+        for index, card in self._wallpaper_cards.items():
+            selected = self.page_rows[index][0] in self.selected_ids if index < len(self.page_rows) else False
+            card.set_selection_state(self.selection_mode, selected)
+        if self.selection_mode:
+            self.count_label.setText(
+                f"共 {len(self.visible_rows)} 张壁纸 · 当前第 {self.current_page + 1} 页 · 已选择 {len(self.selected_ids)} 张"
+            )
 
     def delete_selected_images(self):
         count = len(self.selected_ids)
