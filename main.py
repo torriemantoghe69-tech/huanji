@@ -89,7 +89,7 @@ QFrame#WallpaperCard { background:#ffffff; border:1px solid #e1e5ef; border-radi
 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#f8f8ff; }
 QFrame#WallpaperCard[portrait="true"] { background:transparent; border:1px solid transparent; }
 QFrame#WallpaperCard[portrait="true"]:hover { background:transparent; border:1px solid transparent; }
-QWidget#CardCoverHost[portrait="true"] { background:#e9edf5; border:1px solid #e1e5ef; border-radius:9px; padding:6px; }
+QWidget#CardCoverHost { background:#e9edf5; border:1px solid #e1e5ef; border-radius:9px; padding:6px; }
 QLabel#CardCover { background:#e9edf5; color:#788196; border-radius:8px; }
 QLabel#CardCover[portrait="true"] { background:transparent; border:0px; }
 QLabel#CardCategory { color:#788196; font-size:11px; }
@@ -123,7 +123,7 @@ QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radi
 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
 QFrame#WallpaperCard[portrait="true"] { background:transparent; border:1px solid transparent; }
 QFrame#WallpaperCard[portrait="true"]:hover { background:transparent; border:1px solid transparent; }
-QWidget#CardCoverHost[portrait="true"] { background:#0e1016; border:1px solid #2b3040; border-radius:9px; padding:6px; }
+QWidget#CardCoverHost { background:#0e1016; border:1px solid #2b3040; border-radius:9px; padding:6px; }
 QLabel#CardCover { background:#0e1016; color:#9299aa; border-radius:8px; }
 QLabel#CardCover[portrait="true"] { background:transparent; border:0px; }
 QLabel#CardCategory { color:#9299aa; font-size:11px; }
@@ -505,38 +505,24 @@ class WallpaperCard(QFrame):
         layout.addLayout(bottom)
 
     def _set_portrait_layout(self, is_portrait, image_size=None):
-        if self._portrait_layout is is_portrait:
-            return
+        # Windows 资源管理器式统一缩略图画布：所有卡片预览区域等大，
+        # 图片按原始比例完整显示并居中，竖图两侧自然留白，不裁切不拉伸。
         self._portrait_layout = is_portrait
-        self.setProperty("portrait", is_portrait)
-        self.cover_host.setProperty("portrait", is_portrait)
-        self.cover.setProperty("portrait", is_portrait)
         for widget in (self, self.cover_host, self.cover):
+            widget.setProperty("portrait", False)
             widget.style().unpolish(widget)
             widget.style().polish(widget)
-        if is_portrait:
-            pad = 6
-            inner_h = 240 - pad * 2
-            width = image_size.width() if image_size and image_size.isValid() else 2
-            height = image_size.height() if image_size and image_size.isValid() else 3
-            portrait_width = min(240, max(1, int(inner_h * width / max(1, height))))
-            self.cover_layout.setContentsMargins(pad, pad, pad, pad)
-            self.cover_host.setFixedWidth(portrait_width + pad * 2)
-            self.cover.setFixedWidth(portrait_width)
-            self.cover.setFixedHeight(inner_h)
-            self.card_layout.setAlignment(self.cover_host, Qt.AlignmentFlag.AlignHCenter)
-            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
-        else:
-            self.cover_layout.setContentsMargins(0, 0, 0, 0)
-            self.cover_host.setMinimumWidth(0)
-            self.cover_host.setMaximumWidth(16777215)
-            self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.cover.setMinimumWidth(0)
-            self.cover.setMaximumWidth(16777215)
-            self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.cover.setFixedHeight(240)
-            self.card_layout.setAlignment(self.cover_host, Qt.Alignment())
-            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignVCenter)
+        self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.cover_host.setFixedHeight(240)
+        self.cover_host.setMinimumWidth(0)
+        self.cover_host.setMaximumWidth(16777215)
+        self.cover_layout.setContentsMargins(8, 8, 8, 8)
+        self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
+        self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.cover.setMinimumWidth(0)
+        self.cover.setMaximumWidth(16777215)
+        self.cover.setFixedHeight(222)
+        self.card_layout.setAlignment(self.cover_host, Qt.Alignment())
 
     def load_thumbnail(self):
         cache_key = self.image_path
