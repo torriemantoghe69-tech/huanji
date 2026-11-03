@@ -503,7 +503,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_NAME)
         self.resize(1280, 820)
         self.setAcceptDrops(True)
-        self.current_category = "全部壁纸"
+        self.current_category = "横屏壁纸"
         self.show_favorites = False
         self.settings = QSettings("Huanjing", "WallpaperGallery")
         saved_theme = self.settings.value("theme", "dark")
@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         side.addSpacing(14)
         side.addWidget(QLabel("图片空间", objectName="Muted"))
         self.nav = QListWidget()
-        for name in ["全部壁纸", "横屏壁纸", "竖屏壁纸", "我的收藏", "未分类"]:
+        for name in ["横屏壁纸", "竖屏壁纸", "我的收藏", "未分类"]:
             self.nav.addItem(name)
         self.nav.setCurrentRow(0)
         self.nav.currentTextChanged.connect(self.change_category)
