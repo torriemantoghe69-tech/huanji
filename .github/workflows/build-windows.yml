@@ -18,15 +18,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
-      - name: Build diagnostic executable (console enabled)
-        run: pyinstaller --noconfirm --console --name HuanjingWallpaperGallery-Diagnostic --distpath dist/diagnostic --workpath build/diagnostic --collect-all PySide6 main.py
-      - name: Build normal executable (windowed)
-        run: pyinstaller --noconfirm --windowed --name HuanjingWallpaperGallery --distpath dist/standard --workpath build/standard --collect-all PySide6 main.py
-      - name: Upload EXE packages
+      - name: Build single diagnostic executable
+        run: pyinstaller --noconfirm --onefile --console --name HuanjingWallpaperGallery-Diagnostic --collect-all PySide6 main.py
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
-          name: HuanjingWallpaperGallery-Windows-Diagnostic
-          path: |
-            dist/diagnostic/HuanjingWallpaperGallery-Diagnostic/
-            dist/standard/HuanjingWallpaperGallery/
+          name: HuanjingWallpaperGallery-Windows
+          path: dist/HuanjingWallpaperGallery-Diagnostic.exe
           if-no-files-found: error
