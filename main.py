@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QLineEdit, QListWidget, QListWidgetItem,
     QScrollArea, QGridLayout, QFrame, QMessageBox, QDialog, QInputDialog,
-    QMenu, QSizePolicy
+    QMenu, QSizePolicy, QCheckBox
 )
 
 APP_NAME = "幻境壁纸馆"
@@ -26,7 +26,7 @@ THUMB_DIR = DATA_DIR / "thumbnails"
 DB_PATH = DATA_DIR / "gallery.db"
 SUPPORTED = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 PIXMAP_CACHE = OrderedDict()
-PIXMAP_CACHE_LIMIT = 64  # Bound decoded thumbnail memory
+PIXMAP_CACHE_LIMIT = 160  # Keep nearby thumbnails decoded to reduce scroll-stop stalls
 
 def _log_path():
     base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
@@ -340,7 +340,7 @@ class SmoothScrollArea(QScrollArea):
 
 
 class WallpaperCard(QFrame):
-    def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
+    def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, selection_mode=False, selected=False, on_select=None, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
@@ -366,6 +366,12 @@ class WallpaperCard(QFrame):
         title.setToolTip(row[2])
         layout.addWidget(title)
         bottom = QHBoxLayout()
+        self.select_box = QCheckBox("选择")
+        self.select_box.setVisible(selection_mode)
+        self.select_box.setChecked(selected)
+        if on_select:
+            self.select_box.toggled.connect(lambda checked: on_select(row[0], checked))
+        bottom.addWidget(self.select_box)
         cat = QLabel(row[3])
         cat.setObjectName("CardCategory")
         bottom.addWidget(cat)
@@ -437,8 +443,10 @@ class MainWindow(QMainWindow):
         self.theme = saved_theme if saved_theme in ("light", "dark") else "dark"
         self._thumbnail_timer = QTimer(self)
         self._thumbnail_timer.setSingleShot(True)
-        self._thumbnail_timer.setInterval(35)
+        self._thumbnail_timer.setInterval(70)
         self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
+        self.selected_ids = set()
+        self.selection_mode = False
         self._build_ui()
         self.apply_theme()
         self.refresh()
@@ -545,6 +553,13 @@ class MainWindow(QMainWindow):
         self.refresh_folders_btn.setToolTip("重新扫描之前导入过的文件夹，只添加新图片，不重复导入")
         self.refresh_folders_btn.clicked.connect(self.refresh_source_folders)
         header.addWidget(self.refresh_folders_btn)
+        self.select_mode_btn = QPushButton("批量选择")
+        self.select_mode_btn.clicked.connect(self.toggle_selection_mode)
+        header.addWidget(self.select_mode_btn)
+        self.delete_folder_btn = QPushButton("删除文件夹壁纸")
+        self.delete_folder_btn.setToolTip("从壁纸馆批量移除所选文件夹导入的壁纸，不删除原始图片")
+        self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
+        header.addWidget(self.delete_folder_btn)
         content.addLayout(header)
 
         self.grid_host = QWidget()
@@ -562,7 +577,7 @@ class MainWindow(QMainWindow):
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = {}
         self._virtual_row_height = 250
-        self._virtual_overscan_rows = 1
+        self._virtual_overscan_rows = 3
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         content.addWidget(self.scroll, 1)
         outer.addLayout(content, 1)
@@ -603,6 +618,7 @@ class MainWindow(QMainWindow):
             self.grid.setColumnMinimumWidth(column, 1)
             self.grid.setColumnStretch(column, 1)
         self._card_categories = categories
+        self.selected_ids.intersection_update(row[0] for row in filtered)
         self._virtual_row_count = (len(filtered) + self.grid_columns - 1) // self.grid_columns
         self.grid_host.setMinimumHeight(
             self._virtual_row_count * (self._virtual_row_height + self.grid.verticalSpacing()) + 16
@@ -647,7 +663,8 @@ class MainWindow(QMainWindow):
             card = WallpaperCard(
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
                 self.delete_image, self.rename_image, self.move_category,
-                self.set_wallpaper, self._card_categories
+                self.set_wallpaper, self._card_categories,
+                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
             )
             card.setFixedHeight(self._virtual_row_height)
             self._wallpaper_cards[index] = card
@@ -659,6 +676,8 @@ class MainWindow(QMainWindow):
         self.count_label.setToolTip(
             f"当前只创建 {len(self._wallpaper_cards)} 张可视区域附近的卡片控件，共 {len(self.visible_rows)} 张壁纸"
         )
+        if self.selection_mode:
+            self.count_label.setText(f"共 {len(self.visible_rows)} 张壁纸 · 已选择 {len(self.selected_ids)} 张")
 
     def _refresh_categories(self, rows=None):
         with sqlite3.connect(DB_PATH) as db:
@@ -869,33 +888,100 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "设置失败", str(exc))
 
+    def _remove_wallpaper_ids(self, ids):
+        ids = list(set(ids))
+        if not ids:
+            return 0
+        with sqlite3.connect(DB_PATH) as db:
+            placeholders = ",".join("?" for _ in ids)
+            rows = db.execute(
+                f"SELECT id, filename FROM wallpapers WHERE id IN ({placeholders})", ids
+            ).fetchall()
+            db.execute(f"DELETE FROM wallpapers WHERE id IN ({placeholders})", ids)
+        for _, filename in rows:
+            try:
+                (IMAGE_DIR / filename).unlink(missing_ok=True)
+            except OSError:
+                logging.warning("Could not remove managed image copy: %s", filename)
+            for cached in THUMB_DIR.glob(f"{Path(filename).stem}_*.jpg"):
+                try:
+                    cached.unlink(missing_ok=True)
+                except OSError:
+                    logging.warning("Could not remove thumbnail cache: %s", cached)
+        self.selected_ids.difference_update(ids)
+        self.refresh()
+        return len(rows)
+
+    def on_card_selected(self, uid, checked):
+        if checked:
+            self.selected_ids.add(uid)
+        else:
+            self.selected_ids.discard(uid)
+        self.statusBar().showMessage(f"已选择 {len(self.selected_ids)} 张壁纸", 2500)
+
+    def toggle_selection_mode(self):
+        self.selection_mode = not self.selection_mode
+        if not self.selection_mode:
+            self.selected_ids.clear()
+        self.select_mode_btn.setText("完成选择" if self.selection_mode else "批量选择")
+        self.refresh()
+
+    def delete_selected_images(self):
+        count = len(self.selected_ids)
+        if not count:
+            QMessageBox.information(self, "批量删除", "请先勾选要删除的壁纸。")
+            return
+        answer = QMessageBox.question(
+            self, "批量移除壁纸",
+            f"确定从壁纸馆移除选中的 {count} 张壁纸吗？\n\n"
+            "只删除软件内记录和软件自己的图片副本，不会删除原始文件夹中的图片。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            removed = self._remove_wallpaper_ids(self.selected_ids)
+            self.statusBar().showMessage(f"已从壁纸馆移除 {removed} 张壁纸", 5000)
+
+    def delete_folder_wallpapers(self):
+        folder = QFileDialog.getExistingDirectory(self, "选择要清空壁纸的来源文件夹", str(Path.home()))
+        if not folder:
+            return
+        root = Path(folder).resolve()
+        with sqlite3.connect(DB_PATH) as db:
+            rows = db.execute("SELECT id, source_path FROM wallpapers WHERE source_path IS NOT NULL AND source_path != ''").fetchall()
+        ids = []
+        for uid, source in rows:
+            try:
+                Path(source).resolve().relative_to(root)
+                ids.append(uid)
+            except (ValueError, OSError):
+                continue
+        if not ids:
+            QMessageBox.information(self, "删除文件夹壁纸", "这个文件夹中没有已导入壁纸。")
+            return
+        answer = QMessageBox.question(
+            self, "删除文件夹内壁纸",
+            f"确定从壁纸馆移除该文件夹导入的全部 {len(ids)} 张壁纸吗？\n\n"
+            "只移除软件内记录和软件自己的图片副本，不会删除文件夹里的原始图片。"
+            "同时取消该文件夹的自动刷新记录。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        with sqlite3.connect(DB_PATH) as db:
+            db.execute("DELETE FROM source_folders WHERE path=?", (str(root),))
+        removed = self._remove_wallpaper_ids(ids)
+        self.statusBar().showMessage(f"已移除该文件夹的 {removed} 张壁纸，原始图片保留", 5000)
+
     def delete_image(self, uid):
         answer = QMessageBox.question(
             self, "从壁纸馆移除",
-            "确定从壁纸馆移除这张壁纸吗？\n\n"
+            "确定从壁纸馆移除这张壁纸吗？\\n\\n"
             "只会移除软件内的记录和软件自己的副本，"
             "不会删除导入时所在文件夹中的原始图片。"
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        with sqlite3.connect(DB_PATH) as db:
-            row = db.execute(
-                "SELECT filename, source_path FROM wallpapers WHERE id=?", (uid,)
-            ).fetchone()
-            db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))
-        if row:
-            # filename 指向软件自己的图库副本；source_path 始终只作来源记录，绝不删除。
-            managed_copy = IMAGE_DIR / row[0]
-            try:
-                managed_copy.unlink(missing_ok=True)
-            except OSError:
-                logging.warning("Could not remove managed image copy: %s", managed_copy)
-            for cached in THUMB_DIR.glob(f"{Path(row[0]).stem}_*.jpg"):
-                try:
-                    cached.unlink(missing_ok=True)
-                except OSError:
-                    logging.warning("Could not remove thumbnail cache: %s", cached)
-        self.refresh()
+        self._remove_wallpaper_ids([uid])
 
 def main():
     app = QApplication(sys.argv)
