@@ -402,6 +402,12 @@ class WallpaperCard(QFrame):
         self.cover = cover
         self.cover_host = cover_host
         self.cover_layout = cover_layout
+        self._portrait_layout = None
+        # 先读取图片尺寸并确定竖屏卡片的最终几何尺寸，避免翻页后
+        # 缩略图异步加载完成时卡片突然从横向占位变成窄竖屏框。
+        source_size = QImageReader(self.image_path).size()
+        if source_size.isValid():
+            self._set_portrait_layout(source_size.height() > source_size.width(), source_size)
         cover.setText("滚动到此处加载预览")
         cover.mousePressEvent = lambda event: on_open(row)
         cover_layout.addWidget(cover)
@@ -427,6 +433,40 @@ class WallpaperCard(QFrame):
         bottom.addWidget(more)
         layout.addLayout(bottom)
 
+    def _set_portrait_layout(self, is_portrait, image_size=None):
+        if self._portrait_layout is is_portrait:
+            return
+        self._portrait_layout = is_portrait
+        self.setProperty("portrait", is_portrait)
+        self.cover_host.setProperty("portrait", is_portrait)
+        self.cover.setProperty("portrait", is_portrait)
+        for widget in (self, self.cover_host, self.cover):
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+        if is_portrait:
+            pad = 6
+            inner_h = 240 - pad * 2
+            width = image_size.width() if image_size and image_size.isValid() else 2
+            height = image_size.height() if image_size and image_size.isValid() else 3
+            portrait_width = min(240, max(1, int(inner_h * width / max(1, height))))
+            self.cover_layout.setContentsMargins(pad, pad, pad, pad)
+            self.cover_host.setFixedWidth(portrait_width + pad * 2)
+            self.cover.setFixedWidth(portrait_width)
+            self.cover.setFixedHeight(inner_h)
+            self.card_layout.setAlignment(self.cover_host, Qt.AlignmentFlag.AlignHCenter)
+            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
+        else:
+            self.cover_layout.setContentsMargins(0, 0, 0, 0)
+            self.cover_host.setMinimumWidth(0)
+            self.cover_host.setMaximumWidth(16777215)
+            self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.cover.setMinimumWidth(0)
+            self.cover.setMaximumWidth(16777215)
+            self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.cover.setFixedHeight(240)
+            self.card_layout.setAlignment(self.cover_host, Qt.Alignment())
+            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignVCenter)
+
     def load_thumbnail(self):
         cache_key = self.image_path
         pix = PIXMAP_CACHE.get(cache_key)
@@ -440,49 +480,9 @@ class WallpaperCard(QFrame):
                 PIXMAP_CACHE.popitem(last=False)
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
+        # 正常情况下构造卡片时已按原图尺寸完成布局；仅在方向信息变化时修正。
+        self._set_portrait_layout(pix.height() > pix.width(), pix.size())
         self.cover.setText("")
-        self.cover.setFixedHeight(240)
-        if pix.height() > pix.width():
-            # 竖屏：只保留图片外一圈很小的留白，不再让整张卡片都被空白包住。
-            pad = 6
-            inner_h = max(1, 240 - pad * 2)
-            portrait_width = max(1, int(inner_h * pix.width() / max(1, pix.height())))
-            portrait_width = min(240, portrait_width)
-            self.setProperty("portrait", True)
-            self.cover_host.setProperty("portrait", True)
-            self.cover.setProperty("portrait", True)
-            self.style().unpolish(self)
-            self.style().polish(self)
-            self.cover_host.style().unpolish(self.cover_host)
-            self.cover_host.style().polish(self.cover_host)
-            self.cover.style().unpolish(self.cover)
-            self.cover.style().polish(self.cover)
-            self.cover_layout.setContentsMargins(pad, pad, pad, pad)
-            self.cover_host.setFixedWidth(portrait_width + pad * 2)
-            self.cover.setFixedWidth(portrait_width)
-            self.cover.setFixedHeight(inner_h)
-            self.card_layout.setAlignment(self.cover_host, Qt.AlignmentFlag.AlignHCenter)
-            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
-        else:
-            self.setProperty("portrait", False)
-            self.cover_host.setProperty("portrait", False)
-            self.cover.setProperty("portrait", False)
-            self.style().unpolish(self)
-            self.style().polish(self)
-            self.cover_host.style().unpolish(self.cover_host)
-            self.cover_host.style().polish(self.cover_host)
-            self.cover.style().unpolish(self.cover)
-            self.cover.style().polish(self.cover)
-            self.cover_layout.setContentsMargins(0, 0, 0, 0)
-            self.cover_host.setMinimumWidth(0)
-            self.cover_host.setMaximumWidth(16777215)
-            self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.cover.setMinimumWidth(0)
-            self.cover.setMaximumWidth(16777215)
-            self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.cover.setFixedHeight(240)
-            self.card_layout.setAlignment(self.cover_host, Qt.Alignment())
-            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignVCenter)
         target_size = self.cover.contentsRect().size()
         if target_size.width() < 2 or target_size.height() < 2:
             target_size = QSize(268, 240)
@@ -685,6 +685,8 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
+        # 暂停网格重绘，避免翻页重建卡片时短暂露出空白帧。
+        self.grid_host.setUpdatesEnabled(False)
         # 每次刷新都递增代次；旧页面尚未完成的缩略图任务会被丢弃。
         self._thumbnail_generation += 1
         generation = self._thumbnail_generation
@@ -762,6 +764,8 @@ class MainWindow(QMainWindow):
 
         self._refresh_categories(rows)
         self.scroll.verticalScrollBar().setValue(0)
+        self.grid_host.setUpdatesEnabled(True)
+        self.grid_host.update()
 
     def _on_thumbnail_ready(self, generation, index, image_path):
         self._thumbnail_jobs.pop((generation, index), None)
