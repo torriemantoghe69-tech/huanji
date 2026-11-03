@@ -388,6 +388,7 @@ class WallpaperCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 6)
         layout.setSpacing(4)
+        self.card_layout = layout
         cover_host = QWidget(self)
         cover_host.setObjectName("CardCoverHost")
         cover_host.setFixedHeight(240)
@@ -447,17 +448,24 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        # 竖屏图片使用独立的窄竖框；横屏图片占满卡片宽度。
-        # 外层预览区域高度固定，确保同一行两张卡片始终等高。
+        # 竖屏图片的预览容器只保留图片实际显示宽度，不再让空白区域也被大框包围。
+        # 横屏图片仍使用整行宽度；两种图片的预览高度保持一致。
         self.cover.setFixedHeight(240)
         if pix.height() > pix.width():
-            portrait_width = max(100, min(180, int(240 * pix.width() / max(1, pix.height()))))
+            portrait_width = max(1, int(240 * pix.width() / max(1, pix.height())))
+            portrait_width = min(240, portrait_width)
+            self.cover_host.setFixedWidth(portrait_width)
             self.cover.setFixedWidth(portrait_width)
+            self.card_layout.setAlignment(self.cover_host, Qt.AlignmentFlag.AlignHCenter)
             self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
         else:
+            self.cover_host.setMinimumWidth(0)
+            self.cover_host.setMaximumWidth(16777215)
+            self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.cover.setMinimumWidth(0)
             self.cover.setMaximumWidth(16777215)
             self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.card_layout.setAlignment(self.cover_host, Qt.Alignment())
             self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignVCenter)
         target_size = self.cover.contentsRect().size()
         if target_size.width() < 2 or target_size.height() < 2:
