@@ -8,7 +8,9 @@ menus alone.
 from __future__ import annotations
 
 from PySide6.QtCore import QObject, QEvent, QTimer
-from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog
+from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog, QPushButton
+
+TARGET_BUTTON_TEXTS = {"批量选择", "全选当前列表"}
 
 
 class _BlankPopupGuard(QObject):
@@ -41,11 +43,20 @@ class _BlankPopupGuard(QObject):
             # Widget may already be gone by the time the deferred check runs.
             return
 
+    def _prune_toolbar_buttons(self) -> None:
+        app = QApplication.instance()
+        if app is None:
+            return
+        for widget in app.allWidgets():
+            if isinstance(widget, QPushButton) and widget.text().strip() in TARGET_BUTTON_TEXTS:
+                widget.hide()
+
     def eventFilter(self, watched, event):
         if not isinstance(watched, QWidget):
             return False
 
         if event.type() in self._CHECK_EVENTS:
+            QTimer.singleShot(0, self._prune_toolbar_buttons)
             if self._is_blank_top_level(watched):
                 # Defer one tick so size/flags settle before we judge it.
                 QTimer.singleShot(0, lambda w=watched: self._hide_if_blank(w))
