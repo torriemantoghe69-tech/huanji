@@ -727,7 +727,7 @@ class MainWindow(QMainWindow):
         self.current_page = max(0, min(self.current_page, total_pages - 1))
         page_start = self.current_page * self.page_size
         self.page_rows = filtered[page_start:page_start + self.page_size]
-        self._virtual_row_count = (len(self.page_rows) + self.grid_columns - 1) // self.grid_columns
+        self._virtual_row_count = (len(self.page_rows) + 1) // 2
         self.page_label.setText(f"第 {self.current_page + 1} / {total_pages} 页")
         self.prev_page_btn.setEnabled(self.current_page > 0)
         self.next_page_btn.setEnabled(self.current_page + 1 < total_pages)
