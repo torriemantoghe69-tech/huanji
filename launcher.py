@@ -4,7 +4,7 @@ import sys
 from typing import Any
 
 import main as app
-from PySide6.QtWidgets import QDialog, QScrollBar
+from PySide6.QtCore import QTimer
 
 
 TARGET_BUTTON_ATTRS = ("select_mode_btn", "select_all_btn")
@@ -33,58 +33,39 @@ def _patch_toolbar_buttons() -> None:
 
 
 def _patch_preview_dialog() -> None:
-    """Keep gallery scroll position and preview image index stable across fullscreen toggles."""
-    original_init = app.PreviewDialog.__init__
-    original_toggle_fullscreen = app.PreviewDialog.toggle_fullscreen
-    original_escape_fullscreen = app.PreviewDialog._escape_fullscreen
-    original_close_event = getattr(app.PreviewDialog, "closeEvent", None)
+    """Restore the gallery page and scroll offset after the preview dialog exits."""
+    original_exec = app.PreviewDialog.exec
 
-    def patched_init(self: app.PreviewDialog, rows, start_index=0, parent=None):
-        original_init(self, rows, start_index=start_index, parent=parent)
-        self._restore_scroll_value = None
-        self._restore_scrollbar: QScrollBar | None = None
-        self._restore_index = self.current_index
+    def patched_exec(self: app.PreviewDialog):
+        parent = self.parentWidget()
+        saved_page = getattr(parent, "current_page", None)
+        saved_scrollbar = None
+        saved_scroll_value = None
         if parent is not None and hasattr(parent, "scroll"):
             try:
-                self._restore_scrollbar = parent.scroll.verticalScrollBar()
-                self._restore_scroll_value = self._restore_scrollbar.value()
-            except Exception:
-                self._restore_scrollbar = None
-                self._restore_scroll_value = None
+                saved_scrollbar = parent.scroll.verticalScrollBar()
+                saved_scroll_value = saved_scrollbar.value()
+            except RuntimeError:
+                saved_scrollbar = None
 
-    def _restore_state(self: app.PreviewDialog) -> None:
-        if self._restore_scrollbar is not None and self._restore_scroll_value is not None:
+        result = original_exec(self)
+
+        if parent is not None and saved_page is not None:
             try:
-                self._restore_scrollbar.setValue(self._restore_scroll_value)
-            except Exception:
+                if getattr(parent, "current_page", saved_page) != saved_page:
+                    parent.current_page = saved_page
+                    parent.refresh()
+                if saved_scrollbar is not None and saved_scroll_value is not None:
+                    QTimer.singleShot(
+                        0,
+                        lambda bar=saved_scrollbar, value=saved_scroll_value:
+                            bar.setValue(value) if bar is not None else None
+                    )
+            except RuntimeError:
                 pass
-        if hasattr(self, "_restore_index"):
-            try:
-                self.current_index = int(self._restore_index)
-                self.show_current()
-            except Exception:
-                pass
+        return result
 
-    def patched_toggle_fullscreen(self: app.PreviewDialog):
-        self._restore_index = self.current_index
-        original_toggle_fullscreen(self)
-        _restore_state(self)
-
-    def patched_escape_fullscreen(self: app.PreviewDialog):
-        self._restore_index = self.current_index
-        original_escape_fullscreen(self)
-        _restore_state(self)
-
-    def patched_close_event(self: app.PreviewDialog, event):
-        _restore_state(self)
-        if original_close_event is not None:
-            return original_close_event(self, event)
-        return QDialog.closeEvent(self, event)
-
-    app.PreviewDialog.__init__ = patched_init  # type: ignore[assignment]
-    app.PreviewDialog.toggle_fullscreen = patched_toggle_fullscreen  # type: ignore[assignment]
-    app.PreviewDialog._escape_fullscreen = patched_escape_fullscreen  # type: ignore[assignment]
-    app.PreviewDialog.closeEvent = patched_close_event  # type: ignore[assignment]
+    app.PreviewDialog.exec = patched_exec  # type: ignore[assignment]
 
 
 _patch_toolbar_buttons()
