@@ -512,7 +512,7 @@ class MainWindow(QMainWindow):
         side.addSpacing(14)
         side.addWidget(QLabel("图片空间", objectName="Muted"))
         self.nav = QListWidget()
-        for name in ["全部壁纸", "我的收藏", "未分类"]:
+        for name in ["全部壁纸", "横屏壁纸", "竖屏壁纸", "我的收藏", "未分类"]:
             self.nav.addItem(name)
         self.nav.setCurrentRow(0)
         self.nav.currentTextChanged.connect(self.change_category)
@@ -638,7 +638,18 @@ class MainWindow(QMainWindow):
         for row in rows:
             if self.show_favorites and not row[4]:
                 continue
-            if self.current_category not in ("全部壁纸", "我的收藏") and row[3] != self.current_category:
+            # 按图片真实尺寸归类：横屏与竖屏分别显示，不改变原始文件。
+            if self.current_category in ("横屏壁纸", "竖屏壁纸"):
+                reader = QImageReader(str(IMAGE_DIR / row[1]))
+                image_size = reader.size()
+                if not image_size.isValid():
+                    continue
+                is_landscape = image_size.width() > image_size.height()
+                if self.current_category == "横屏壁纸" and not is_landscape:
+                    continue
+                if self.current_category == "竖屏壁纸" and is_landscape:
+                    continue
+            elif self.current_category not in ("全部壁纸", "我的收藏") and row[3] != self.current_category:
                 continue
             if self.current_category == "未分类" and row[3] != "未分类":
                 continue
