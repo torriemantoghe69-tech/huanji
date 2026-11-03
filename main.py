@@ -87,7 +87,10 @@ QMenu::item:selected { background:#e9eaff; color:#28234f; }
 QLineEdit:focus { border:1px solid #8174ed; }
 QFrame#WallpaperCard { background:#ffffff; border:1px solid #e1e5ef; border-radius:14px; }
 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#f8f8ff; }
-QLabel#CardCover { background:#e9edf5; color:#788196; border-radius:9px; }
+QFrame#WallpaperCard[portrait="true"] { background:transparent; border:1px solid transparent; }
+QFrame#WallpaperCard[portrait="true"]:hover { background:transparent; border:1px solid transparent; }
+QWidget#CardCoverHost[portrait="true"] { background:#e9edf5; border:1px solid #e1e5ef; border-radius:9px; }
+QLabel#CardCover { background:#e9edf5; color:#788196; border-radius:8px; }
 QLabel#CardCategory { color:#788196; font-size:11px; }
 QDialog { background:#f4f6fb; }
 """
@@ -117,7 +120,10 @@ QMenu::item:selected { background:#343c50; color:#ffffff; }
 QLineEdit:focus { border:1px solid #8174ed; }
 QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radius:14px; }
 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
-QLabel#CardCover { background:#0e1016; color:#9299aa; border-radius:9px; }
+QFrame#WallpaperCard[portrait="true"] { background:transparent; border:1px solid transparent; }
+QFrame#WallpaperCard[portrait="true"]:hover { background:transparent; border:1px solid transparent; }
+QWidget#CardCoverHost[portrait="true"] { background:#0e1016; border:1px solid #2b3040; border-radius:9px; }
+QLabel#CardCover { background:#0e1016; color:#9299aa; border-radius:8px; }
 QLabel#CardCategory { color:#9299aa; font-size:11px; }
 QDialog { background:#101219; }
 """
@@ -452,6 +458,13 @@ class WallpaperCard(QFrame):
         # 横屏图片仍使用整行宽度；两种图片的预览高度保持一致。
         self.cover.setFixedHeight(240)
         if pix.height() > pix.width():
+            # 竖屏：外层卡片不再画整列边框，只给实际图片区域绘制边框。
+            self.setProperty("portrait", True)
+            self.cover_host.setProperty("portrait", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.cover_host.style().unpolish(self.cover_host)
+            self.cover_host.style().polish(self.cover_host)
             portrait_width = max(1, int(240 * pix.width() / max(1, pix.height())))
             portrait_width = min(240, portrait_width)
             self.cover_host.setFixedWidth(portrait_width)
@@ -459,6 +472,12 @@ class WallpaperCard(QFrame):
             self.card_layout.setAlignment(self.cover_host, Qt.AlignmentFlag.AlignHCenter)
             self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
         else:
+            self.setProperty("portrait", False)
+            self.cover_host.setProperty("portrait", False)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.cover_host.style().unpolish(self.cover_host)
+            self.cover_host.style().polish(self.cover_host)
             self.cover_host.setMinimumWidth(0)
             self.cover_host.setMaximumWidth(16777215)
             self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
