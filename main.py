@@ -388,14 +388,24 @@ class WallpaperCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 6)
         layout.setSpacing(4)
+        cover_host = QWidget()
+        cover_host.setObjectName("CardCoverHost")
+        cover_host.setFixedHeight(240)
+        cover_layout = QHBoxLayout(cover_host)
+        cover_layout.setContentsMargins(0, 0, 0, 0)
+        cover_layout.setSpacing(0)
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover.setFixedHeight(240)
+        cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         cover.setObjectName("CardCover")
         self.cover = cover
+        self.cover_host = cover_host
+        self.cover_layout = cover_layout
         cover.setText("滚动到此处加载预览")
         cover.mousePressEvent = lambda event: on_open(row)
-        layout.addWidget(cover)
+        cover_layout.addWidget(cover)
+        layout.addWidget(cover_host)
         title = QLabel(row[2])
         title.setObjectName("CardTitle")
         title.setStyleSheet("font-weight:600;padding:1px 2px;")
@@ -440,8 +450,18 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        # 所有卡片使用统一高度，保证每行左右两张卡片尺寸一致。
-        # 图片按原始比例完整显示，竖屏壁纸不会被裁切或拉伸。
+        # 竖屏图片使用独立的窄竖框；横屏图片占满卡片宽度。
+        # 外层预览区域高度固定，确保同一行两张卡片始终等高。
+        self.cover.setFixedHeight(240)
+        if pix.height() > pix.width():
+            portrait_width = max(100, min(180, int(240 * pix.width() / max(1, pix.height()))))
+            self.cover.setFixedWidth(portrait_width)
+            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
+        else:
+            self.cover.setMinimumWidth(0)
+            self.cover.setMaximumWidth(16777215)
+            self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignVCenter)
         target_size = self.cover.contentsRect().size()
         if target_size.width() < 2 or target_size.height() < 2:
             target_size = QSize(268, 240)
