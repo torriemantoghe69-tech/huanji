@@ -565,8 +565,11 @@ class WallpaperCard(QFrame):
             self._set_portrait_layout(is_portrait, pix.size())
         self.cover.setText("")
         target_size = self.cover.contentsRect().size()
-        if target_size.width() < 2 or target_size.height() < 2:
-            target_size = QSize(268, 240)
+        if target_size.width() < 100 or target_size.height() < 100:
+            # 卡片刚加入网格时 Qt 可能尚未完成布局；稍后按最终尺寸重绘，
+            # 不要先用小尺寸占位图，避免首次显示时图片忽大忽小。
+            QTimer.singleShot(0, self.load_thumbnail)
+            return
         self.cover.setScaledContents(False)
         self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover.setPixmap(pix.scaled(
@@ -913,8 +916,12 @@ class MainWindow(QMainWindow):
         # 只更新当前页对应卡片，翻页后返回的旧任务结果不会污染新页面。
         if generation != self._thumbnail_generation:
             return
-        card = self._wallpaper_cards.get(index)
-        if card is None:
+        if index < 0 or index >= len(self.page_rows):
+            return
+        # 卡片缓存以壁纸 UID 为键，不能把任务的页内序号当作卡片键。
+        uid = self.page_rows[index][0]
+        card = self._wallpaper_cards.get(uid)
+        if card is None or card.row[0] != uid:
             return
         card.image_path = image_path
         card.load_thumbnail()
