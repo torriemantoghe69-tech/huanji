@@ -781,7 +781,10 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
-        # 保留已创建的卡片对象：刷新只调整网格位置，不销毁/重建控件。
+        # 页面切换时同时暂停滚动视口与内容画布的绘制，避免先清空旧卡片、
+        # 再显示新卡片时出现一帧空白/闪烁。
+        self.scroll.setUpdatesEnabled(False)
+        self.scroll.viewport().setUpdatesEnabled(False)
         self.grid_host.setUpdatesEnabled(False)
         self._thumbnail_generation += 1
         generation = self._thumbnail_generation
@@ -885,8 +888,12 @@ class MainWindow(QMainWindow):
 
         self._refresh_categories(rows)
         self.scroll.verticalScrollBar().setValue(0)
+        # 先恢复内容画布，再恢复 viewport/scroll area，最后统一请求一次绘制。
         self.grid_host.setUpdatesEnabled(True)
+        self.scroll.viewport().setUpdatesEnabled(True)
+        self.scroll.setUpdatesEnabled(True)
         self.grid_host.update()
+        self.scroll.viewport().update()
         QTimer.singleShot(0, self._apply_card_column_widths)
 
     def _card_column_width(self):
