@@ -104,7 +104,7 @@ class ChineseLineEdit(QLineEdit):
             ("剪切", self.cut, self.hasSelectedText()),
             ("复制", self.copy, self.hasSelectedText()),
             ("粘贴", self.paste, self.isEnabled()),
-            ("删除", self.del_, self.hasSelectedText()),
+            ("删除", lambda: self.insert(""), self.hasSelectedText()),
             (None, None, False),
             ("全选", self.selectAll, bool(self.text())),
         ]
@@ -500,7 +500,7 @@ class MainWindow(QMainWindow):
             return
         columns = getattr(self, "grid_columns", 5)
         first_card = self._wallpaper_cards[0]
-        row_step = max(1, first_card.height() + self.grid.verticalSpacing())
+        row_step = max(1, (first_card.height() or first_card.sizeHint().height()) + self.grid.verticalSpacing())
         scroll_top = self.scroll.verticalScrollBar().value()
         viewport_height = self.scroll.viewport().height()
         first_row = max(0, scroll_top // row_step - 1)
