@@ -147,11 +147,38 @@ QWidget.setParent = _patched_set_parent
 def _install_preview_scaling_patch():
     import builtins
     import sys
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import Qt, QObject, QEvent, QTimer
     from PySide6.QtGui import QPixmap
 
     original_import = builtins.__import__
     installed = {"done": False}
+
+    class _PreviewImageResizeFilter(QObject):
+        """Refit the cached image whenever the actual image viewport changes."""
+        def __init__(self, dialog):
+            super().__init__(dialog.image)
+            self.dialog = dialog
+
+        def eventFilter(self, watched, event):
+            if event.type() == QEvent.Type.Resize:
+                # QLabel receives its final geometry after the dialog/layout resize.
+                QTimer.singleShot(0, lambda d=self.dialog: _refresh_display(d))
+            return False
+
+    def _refresh_display(instance):
+        key = getattr(instance, "_current_key", None)
+        cache = getattr(instance, "_image_cache", {})
+        image = cache.get(key) if key is not None else None
+        if image is not None and not image.isNull():
+            area = instance.image.contentsRect().size()
+            if area.width() > 0 and area.height() > 0:
+                fitted = QPixmap.fromImage(image).scaled(
+                    area,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                instance.image.setText("")
+                instance.image.setPixmap(fitted)
 
     def _patch(app):
         if installed["done"] or not hasattr(app, "PreviewDialog"):
@@ -196,6 +223,14 @@ def _install_preview_scaling_patch():
             if key == getattr(self, "_current_key", None) and image is not None and not image.isNull():
                 display_cached_image(self, image)
 
+        original_dialog_init = dialog.__init__
+
+        def responsive_dialog_init(self, *args, **kwargs):
+            original_dialog_init(self, *args, **kwargs)
+            self._preview_resize_filter = _PreviewImageResizeFilter(self)
+            self.image.installEventFilter(self._preview_resize_filter)
+
+        dialog.__init__ = responsive_dialog_init
         dialog._cache_key = stable_cache_key
         dialog.show_current = stable_show_current
         dialog._on_image_loaded = stable_image_loaded
