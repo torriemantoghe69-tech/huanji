@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QTimer
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -76,6 +76,19 @@ QListWidget { background:transparent; border:0; outline:0; }
 QListWidget::item { padding:11px; border-radius:8px; }
 QListWidget::item:selected { background:#e5e8fb; color:#28234f; }
 QScrollArea { border:0; background:transparent; }
+QScrollBar:vertical { background:#e9edf5; width:10px; margin:4px 2px; border-radius:5px; }
+QScrollBar::handle:vertical { background:#c4ccda; min-height:34px; border-radius:5px; }
+QScrollBar::handle:vertical:hover { background:#9faac0; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }
+QMenu { background:#ffffff; color:#202534; border:1px solid #d8deea; padding:5px; }
+QMenu::item { padding:7px 24px; border-radius:5px; }
+QMenu::item:selected { background:#e9eaff; color:#28234f; }
+QLineEdit:focus { border:1px solid #8174ed; }
+QFrame#WallpaperCard { background:#ffffff; border:1px solid #e1e5ef; border-radius:14px; }
+QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#f8f8ff; }
+QLabel#CardCover { background:#e9edf5; color:#788196; border-radius:9px; }
+QLabel#CardCategory { color:#788196; font-size:11px; }
 QDialog { background:#f4f6fb; }
 """
 
@@ -93,6 +106,19 @@ QListWidget { background:transparent; border:0; outline:0; }
 QListWidget::item { padding:11px; border-radius:8px; }
 QListWidget::item:selected { background:#30334b; color:#fff; }
 QScrollArea { border:0; background:transparent; }
+QScrollBar:vertical { background:#171a23; width:10px; margin:4px 2px; border-radius:5px; }
+QScrollBar::handle:vertical { background:#3a4153; min-height:34px; border-radius:5px; }
+QScrollBar::handle:vertical:hover { background:#535d75; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background:transparent; }
+QMenu { background:#1b1f2a; color:#edf0f7; border:1px solid #343b4d; padding:5px; }
+QMenu::item { padding:7px 24px; border-radius:5px; }
+QMenu::item:selected { background:#343c50; color:#ffffff; }
+QLineEdit:focus { border:1px solid #8174ed; }
+QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radius:14px; }
+QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
+QLabel#CardCover { background:#0e1016; color:#9299aa; border-radius:9px; }
+QLabel#CardCategory { color:#9299aa; font-size:11px; }
 QDialog { background:#101219; }
 """
 
@@ -279,34 +305,37 @@ class PreviewDialog(QDialog):
 
 class SmoothScrollArea(QScrollArea):
     """使用小步长像素滚动，减少鼠标滚轮上下滚动的跳跃感。"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll_animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
+        self._scroll_animation.setDuration(170)
+        self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
     def wheelEvent(self, event):
-        bar = self.verticalScrollBar()
-        pixel_delta = event.pixelDelta().y()
-        if pixel_delta:
-            delta = pixel_delta
-        else:
-            delta = event.angleDelta().y() / 120.0 * 42
-        if delta:
-            bar.setValue(bar.value() - int(delta))
+        # 只处理垂直滚轮；忽略触控板/鼠标的横向滚动分量。
+        delta_y = event.pixelDelta().y()
+        if not delta_y:
+            delta_y = event.angleDelta().y() / 120.0 * 105
+        if delta_y:
+            bar = self.verticalScrollBar()
+            target = max(bar.minimum(), min(bar.maximum(), bar.value() - int(delta_y)))
+            self._scroll_animation.stop()
+            self._scroll_animation.setStartValue(bar.value())
+            self._scroll_animation.setEndValue(target)
+            self._scroll_animation.start()
             event.accept()
-        else:
-            super().wheelEvent(event)
+            return
+        event.accept()
 
 
 class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
-        if QApplication.instance().property("gallery_theme") == "light":
-            self.setStyleSheet("""
-                QFrame#WallpaperCard { background:#ffffff; border:1px solid #e1e5ef; border-radius:14px; }
-                QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#f8f8ff; }
-            """)
-        else:
-            self.setStyleSheet("""
-                QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radius:14px; }
-                QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
-            """)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
         self.row = row
         self.image_path = str(image_path)
         self.cover = None
@@ -316,19 +345,20 @@ class WallpaperCard(QFrame):
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover.setFixedHeight(190)
-        cover.setStyleSheet("background:#0e1016;border-radius:9px;")
+        cover.setObjectName("CardCover")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
         cover.mousePressEvent = lambda event: on_open(row)
         layout.addWidget(cover)
         title = QLabel(row[2])
+        title.setObjectName("CardTitle")
         title.setStyleSheet("font-weight:600;padding:1px 2px;")
         title.setWordWrap(False)
         title.setToolTip(row[2])
         layout.addWidget(title)
         bottom = QHBoxLayout()
         cat = QLabel(row[3])
-        cat.setStyleSheet("color:#9299aa;font-size:11px;")
+        cat.setObjectName("CardCategory")
         bottom.addWidget(cat)
         bottom.addStretch()
         fav = QPushButton("♥" if row[4] else "♡")
@@ -511,7 +541,11 @@ class MainWindow(QMainWindow):
         self.grid.setVerticalSpacing(8)
         self.scroll = SmoothScrollArea()
         self.scroll.setWidgetResizable(True)
-        self.scroll.verticalScrollBar().setSingleStep(24)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.scroll.verticalScrollBar().setSingleStep(18)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = []
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
@@ -545,6 +579,8 @@ class MainWindow(QMainWindow):
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         categories = self.category_names()
         self.grid_columns = 5
+        for column in range(self.grid_columns):
+            self.grid.setColumnStretch(column, 1)
         for index, row in enumerate(filtered):
             path = IMAGE_DIR / row[1]
             card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, categories)
