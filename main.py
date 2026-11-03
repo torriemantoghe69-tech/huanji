@@ -343,7 +343,7 @@ class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(0)
         self.row = row
         self.image_path = str(image_path)
@@ -599,6 +599,8 @@ class MainWindow(QMainWindow):
         categories = self.category_names()
         self.grid_columns = 5
         for column in range(self.grid_columns):
+            # 忽略卡片内容的自然宽度，由网格把可用空间平均分给两列。
+            self.grid.setColumnMinimumWidth(column, 1)
             self.grid.setColumnStretch(column, 1)
         self._card_categories = categories
         self._virtual_row_count = (len(filtered) + self.grid_columns - 1) // self.grid_columns
@@ -868,16 +870,31 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "设置失败", str(exc))
 
     def delete_image(self, uid):
-        answer = QMessageBox.question(self, "删除壁纸", "确定从壁纸馆删除这张图片吗？")
+        answer = QMessageBox.question(
+            self, "从壁纸馆移除",
+            "确定从壁纸馆移除这张壁纸吗？\n\n"
+            "只会移除软件内的记录和软件自己的副本，"
+            "不会删除导入时所在文件夹中的原始图片。"
+        )
         if answer != QMessageBox.StandardButton.Yes:
             return
         with sqlite3.connect(DB_PATH) as db:
-            row = db.execute("SELECT filename FROM wallpapers WHERE id=?", (uid,)).fetchone()
+            row = db.execute(
+                "SELECT filename, source_path FROM wallpapers WHERE id=?", (uid,)
+            ).fetchone()
             db.execute("DELETE FROM wallpapers WHERE id=?", (uid,))
         if row:
-            (IMAGE_DIR / row[0]).unlink(missing_ok=True)
+            # filename 指向软件自己的图库副本；source_path 始终只作来源记录，绝不删除。
+            managed_copy = IMAGE_DIR / row[0]
+            try:
+                managed_copy.unlink(missing_ok=True)
+            except OSError:
+                logging.warning("Could not remove managed image copy: %s", managed_copy)
             for cached in THUMB_DIR.glob(f"{Path(row[0]).stem}_*.jpg"):
-                cached.unlink(missing_ok=True)
+                try:
+                    cached.unlink(missing_ok=True)
+                except OSError:
+                    logging.warning("Could not remove thumbnail cache: %s", cached)
         self.refresh()
 
 def main():
