@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -240,10 +240,16 @@ class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
-        self.setStyleSheet("""
-            QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radius:14px; }
-            QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
-        """)
+        if QApplication.instance().property("gallery_theme") == "light":
+            self.setStyleSheet("""
+                QFrame#WallpaperCard { background:#ffffff; border:1px solid #e1e5ef; border-radius:14px; }
+                QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#f8f8ff; }
+            """)
+        else:
+            self.setStyleSheet("""
+                QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radius:14px; }
+                QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
+            """)
         self.row = row
         layout = QVBoxLayout(self)
         layout.setContentsMargins(9, 9, 9, 10)
@@ -320,8 +326,22 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         self.current_category = "全部壁纸"
         self.show_favorites = False
+        self.settings = QSettings("Huanjing", "WallpaperGallery")
+        self.theme = self.settings.value("theme", "dark")
         self._build_ui()
+        self.apply_theme()
         self.refresh()
+
+    def apply_theme(self):
+        app = QApplication.instance()
+        app.setStyleSheet(LIGHT_STYLE if self.theme == "light" else DARK_STYLE)
+        app.setProperty("gallery_theme", self.theme)
+        self.theme_button.setText("☀ 白天模式" if self.theme == "dark" else "🌙 夜间模式")
+        self.settings.setValue("theme", self.theme)
+
+    def toggle_theme(self):
+        self.theme = "light" if self.theme == "dark" else "dark"
+        self.apply_theme()
 
     def _build_ui(self):
         root = QWidget()
@@ -372,6 +392,9 @@ class MainWindow(QMainWindow):
         intro.addWidget(self.count_label)
         header.addLayout(intro)
         header.addStretch()
+        self.theme_button = QPushButton()
+        self.theme_button.clicked.connect(self.toggle_theme)
+        header.addWidget(self.theme_button)
         self.search = QLineEdit()
         self.search.setPlaceholderText("搜索壁纸名称或分类…")
         self.search.setFixedWidth(260)
