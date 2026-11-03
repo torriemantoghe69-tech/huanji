@@ -839,17 +839,23 @@ class MainWindow(QMainWindow):
                 self._wallpaper_cards[uid] = card
             else:
                 card.update_row(row, self._card_categories)
+                self._wallpaper_cards.move_to_end(uid)
             card.setFixedSize(card_width, card.sizeHint().height())
             card.show()
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
 
             # 缩略图缓存命中时直接使用；否则异步生成并更新对应卡片。
-            cached_path = self.thumbnail_for(row[1])
-            if cached_path.exists():
+            source_path = IMAGE_DIR / row[1]
+            try:
+                stat = source_path.stat()
+                cached_path = THUMB_DIR / f"{source_path.stem}_{stat.st_mtime_ns}_{stat.st_size}.jpg"
+            except OSError:
+                cached_path = source_path
+            if cached_path.exists() and cached_path != source_path:
                 card.image_path = str(cached_path)
                 card.load_thumbnail()
             else:
-                task = ThumbnailTask(generation, index, IMAGE_DIR / row[1])
+                task = ThumbnailTask(generation, index, source_path)
                 task.signals.finished.connect(self._on_thumbnail_ready)
                 self._thumbnail_jobs[(generation, index)] = task
                 self._thumbnail_pool.start(task)
