@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, QSize, QEvent, QSettings, QPoint, QRect
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -251,6 +251,8 @@ class WallpaperCard(QFrame):
                 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
             """)
         self.row = row
+        self.image_path = str(image_path)
+        self.cover = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(9, 9, 9, 10)
         layout.setSpacing(8)
@@ -258,19 +260,9 @@ class WallpaperCard(QFrame):
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         cover.setFixedHeight(150)
         cover.setStyleSheet("background:#0e1016;border-radius:9px;")
-        cache_key = str(image_path)
-        pix = PIXMAP_CACHE.get(cache_key)
-        if pix is None:
-            pix = QPixmap(cache_key)
-            if not pix.isNull():
-                PIXMAP_CACHE[cache_key] = pix
-                PIXMAP_CACHE.move_to_end(cache_key)
-                while len(PIXMAP_CACHE) > PIXMAP_CACHE_LIMIT:
-                    PIXMAP_CACHE.popitem(last=False)
-        else:
-            PIXMAP_CACHE.move_to_end(cache_key)
-        cover.setPixmap(pix.scaled(QSize(220, 132), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                                   Qt.TransformationMode.SmoothTransformation))
+        self.cover = cover
+        cover.setText("滚动到此处加载预览")
+        self.load_thumbnail()
         cover.mousePressEvent = lambda event: on_open(row)
         layout.addWidget(cover)
         title = QLabel(row[2])
@@ -297,6 +289,25 @@ class WallpaperCard(QFrame):
         bottom.addWidget(more)
         layout.addLayout(bottom)
 
+    def load_thumbnail(self):
+        cache_key = self.image_path
+        pix = PIXMAP_CACHE.get(cache_key)
+        if pix is None:
+            pix = QPixmap(cache_key)
+            if pix.isNull():
+                return
+            PIXMAP_CACHE[cache_key] = pix
+            PIXMAP_CACHE.move_to_end(cache_key)
+            while len(PIXMAP_CACHE) > PIXMAP_CACHE_LIMIT:
+                PIXMAP_CACHE.popitem(last=False)
+        else:
+            PIXMAP_CACHE.move_to_end(cache_key)
+        self.cover.setText("")
+        self.cover.setPixmap(pix.scaled(
+            QSize(220, 132), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation
+        ))
+
     def show_menu(self, button, on_delete, on_rename, on_category, on_wallpaper, categories):
         menu = QMenu(self)
         rename = menu.addAction("重命名")
@@ -317,42 +328,6 @@ class WallpaperCard(QFrame):
             on_wallpaper(self.row[1])
         elif chosen == delete:
             on_delete(self.row[0])
-
-class SmoothScrollArea(QScrollArea):
-    """带缓动效果的滚动区域；动画由 Qt 事件循环驱动，目标约 60 FPS。"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.verticalScrollBar().setSingleStep(30)
-        self.scroll_animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
-        self.scroll_animation.setDuration(180)
-        self.scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-
-    def wheelEvent(self, event):
-        pixel_delta = event.pixelDelta().y()
-        angle_delta = event.angleDelta().y()
-        if pixel_delta:
-            distance = -pixel_delta
-        elif angle_delta:
-            distance = -(angle_delta / 120.0) * 90
-        else:
-            super().wheelEvent(event)
-            return
-
-        bar = self.verticalScrollBar()
-        target = max(bar.minimum(), min(bar.maximum(), bar.value() + int(distance)))
-        if target == bar.value():
-            event.accept()
-            return
-
-        # 连续滚轮输入时从当前动画位置重新计算，避免动画堆积和明显卡顿。
-        self.scroll_animation.stop()
-        self.scroll_animation.setStartValue(bar.value())
-        self.scroll_animation.setEndValue(target)
-        self.scroll_animation.start()
-        event.accept()
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -450,9 +425,11 @@ class MainWindow(QMainWindow):
         self.grid.setContentsMargins(0, 12, 0, 12)
         self.grid.setHorizontalSpacing(14)
         self.grid.setVerticalSpacing(14)
-        self.scroll = SmoothScrollArea()
+        self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setWidget(self.grid_host)
+        self._wallpaper_cards = []
+        self.scroll.verticalScrollBar().valueChanged.connect(self.load_visible_thumbnails)
         content.addWidget(self.scroll, 1)
         outer.addLayout(content, 1)
 
@@ -483,11 +460,25 @@ class MainWindow(QMainWindow):
         categories = self.category_names()
         for index, row in enumerate(filtered):
             path = IMAGE_DIR / row[1]
-            thumbnail = self.thumbnail_for(row[1])
-            card = WallpaperCard(row, thumbnail or path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, categories)
+            card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, categories)
+            self._wallpaper_cards.append(card)
             self.grid.addWidget(card, index // 4, index % 4)
         self.grid.setRowStretch((len(filtered) + 3) // 4, 1)
         self._refresh_categories(rows)
+        self.load_visible_thumbnails()
+
+    def load_visible_thumbnails(self):
+        if not hasattr(self, "_wallpaper_cards") or not self._wallpaper_cards:
+            return
+        viewport = self.scroll.viewport()
+        visible_rect = QRect(
+            self.grid_host.mapFrom(viewport, QPoint(0, 0)), viewport.size()
+        ).adjusted(0, -180, 0, 180)
+        for card in self._wallpaper_cards:
+            if card.cover.pixmap() is None and card.geometry().intersects(visible_rect):
+                thumbnail = self.thumbnail_for(Path(card.image_path).name)
+                card.image_path = str(thumbnail or card.image_path)
+                card.load_thumbnail()
 
     def _refresh_categories(self, rows=None):
         with sqlite3.connect(DB_PATH) as db:
