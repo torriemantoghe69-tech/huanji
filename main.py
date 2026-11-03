@@ -94,29 +94,118 @@ def ensure_storage():
         db.execute("INSERT OR IGNORE INTO categories(name) SELECT DISTINCT category FROM wallpapers WHERE category NOT IN ('', '未分类')")
 
 class PreviewDialog(QDialog):
-    def __init__(self, image_path, title, parent=None):
+    def __init__(self, rows, start_index=0, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(title)
+        self.rows = list(rows)
+        self.current_index = max(0, min(start_index, len(self.rows) - 1))
+        self._fullscreen = False
+        self.setWindowTitle("图片预览")
         self.resize(1050, 720)
+        self.setMinimumSize(560, 420)
+
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+
         self.image = QLabel()
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image.setStyleSheet("background:#08090d;border-radius:12px;")
-        # Decode only the pixels needed for preview; originals can be very large.
-        reader = QImageReader(str(image_path))
+        self.image.setMinimumSize(1, 1)
+        layout.addWidget(self.image, 1)
+
+        toolbar = QHBoxLayout()
+        self.prev_button = QPushButton("‹ 上一张")
+        self.prev_button.clicked.connect(self.show_previous)
+        toolbar.addWidget(self.prev_button)
+
+        self.position_label = QLabel()
+        self.position_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        toolbar.addWidget(self.position_label, 1)
+
+        self.next_button = QPushButton("下一张 ›")
+        self.next_button.clicked.connect(self.show_next)
+        toolbar.addWidget(self.next_button)
+
+        self.fullscreen_button = QPushButton("⛶ 全屏")
+        self.fullscreen_button.clicked.connect(self.toggle_fullscreen)
+        toolbar.addWidget(self.fullscreen_button)
+
+        close = QPushButton("关闭")
+        close.clicked.connect(self.accept)
+        toolbar.addWidget(close)
+        layout.addLayout(toolbar)
+
+        self.shortcut_left = QShortcut(QKeySequence(Qt.Key.Key_Left), self)
+        self.shortcut_left.activated.connect(self.show_previous)
+        self.shortcut_right = QShortcut(QKeySequence(Qt.Key.Key_Right), self)
+        self.shortcut_right.activated.connect(self.show_next)
+        self.shortcut_escape = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self.shortcut_escape.activated.connect(self._escape_fullscreen)
+
+        self.show_current()
+
+    def show_current(self):
+        if not self.rows:
+            return
+        row = self.rows[self.current_index]
+        path = IMAGE_DIR / row[1]
+        self.setWindowTitle(row[2] or "图片预览")
+        self.position_label.setText(
+            f"{row[2]}    ·    {self.current_index + 1} / {len(self.rows)}"
+        )
+        self.prev_button.setEnabled(len(self.rows) > 1)
+        self.next_button.setEnabled(len(self.rows) > 1)
+
+        target = self.image.size()
+        if target.width() < 100 or target.height() < 100:
+            target = QSize(1000, 620)
+        reader = QImageReader(str(path))
         reader.setAutoTransform(True)
-        source_size = reader.size()
-        if source_size.isValid():
-            reader.setScaledSize(source_size.scaled(
-                QSize(1000, 620), Qt.AspectRatioMode.KeepAspectRatio
+        original = reader.size()
+        if original.isValid():
+            reader.setScaledSize(original.scaled(
+                target, Qt.AspectRatioMode.KeepAspectRatio
             ))
         image = reader.read()
-        pix = QPixmap.fromImage(image) if not image.isNull() else QPixmap()
-        self.image.setPixmap(pix)
-        layout.addWidget(self.image, 1)
-        close = QPushButton("关闭预览")
-        close.clicked.connect(self.accept)
-        layout.addWidget(close, alignment=Qt.AlignmentFlag.AlignRight)
+        if image.isNull():
+            self.image.setText("无法读取这张图片")
+            self.image.setPixmap(QPixmap())
+        else:
+            self.image.setText("")
+            self.image.setPixmap(QPixmap.fromImage(image))
+
+    def show_previous(self):
+        if len(self.rows) > 1:
+            self.current_index = (self.current_index - 1) % len(self.rows)
+            self.show_current()
+
+    def show_next(self):
+        if len(self.rows) > 1:
+            self.current_index = (self.current_index + 1) % len(self.rows)
+            self.show_current()
+
+    def toggle_fullscreen(self):
+        if self._fullscreen:
+            self.showNormal()
+            self._fullscreen = False
+            self.fullscreen_button.setText("⛶ 全屏")
+        else:
+            self.showFullScreen()
+            self._fullscreen = True
+            self.fullscreen_button.setText("退出全屏")
+        self.show_current()
+
+    def _escape_fullscreen(self):
+        if self._fullscreen:
+            self.showNormal()
+            self._fullscreen = False
+            self.fullscreen_button.setText("⛶ 全屏")
+            self.show_current()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "rows"):
+            self.show_current()
 
 class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
@@ -301,6 +390,7 @@ class MainWindow(QMainWindow):
             if query and query not in row[2].lower() and query not in row[3].lower():
                 continue
             filtered.append(row)
+        self.visible_rows = filtered
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         categories = self.category_names()
         for index, row in enumerate(filtered):
@@ -439,8 +529,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "部分文件导入失败", preview)
 
     def open_preview(self, row):
-        path = IMAGE_DIR / row[1]
-        dlg = PreviewDialog(path, row[2], self)
+        rows = getattr(self, "visible_rows", [])
+        try:
+            index = next(i for i, item in enumerate(rows) if item[0] == row[0])
+        except StopIteration:
+            rows = [row]
+            index = 0
+        dlg = PreviewDialog(rows, index, self)
         dlg.exec()
 
     def toggle_favorite(self, uid, value):
