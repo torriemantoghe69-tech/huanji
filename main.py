@@ -353,7 +353,7 @@ class WallpaperCard(QFrame):
         layout.setSpacing(4)
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setFixedHeight(190)
+        cover.setFixedHeight(108)
         cover.setObjectName("CardCover")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
@@ -363,7 +363,6 @@ class WallpaperCard(QFrame):
         title.setObjectName("CardTitle")
         title.setStyleSheet("font-weight:600;padding:1px 2px;")
         title.setWordWrap(False)
-        title.setToolTip(row[2])
         layout.addWidget(title)
         bottom = QHBoxLayout()
         self.select_box = QCheckBox("选择")
@@ -404,8 +403,9 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
+        target_size = QSize(max(120, self.cover.width()), max(80, self.cover.height()))
         self.cover.setPixmap(pix.scaled(
-            QSize(360, 190), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            target_size, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         ))
 
@@ -582,7 +582,7 @@ class MainWindow(QMainWindow):
         self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
         self._wallpaper_cards = {}
-        self._virtual_row_height = 250
+        self._virtual_row_height = 174
         self._virtual_overscan_rows = 3
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         content.addWidget(self.scroll, 1)
@@ -618,7 +618,7 @@ class MainWindow(QMainWindow):
         self.visible_rows = filtered
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         categories = self.category_names()
-        self.grid_columns = 2
+        self.grid_columns = 6
         for column in range(self.grid_columns):
             # 忽略卡片内容的自然宽度，由网格把可用空间平均分给两列。
             self.grid.setColumnMinimumWidth(column, 1)
@@ -679,9 +679,6 @@ class MainWindow(QMainWindow):
             card.image_path = str(thumbnail or (IMAGE_DIR / row[1]))
             card.load_thumbnail()
 
-        self.count_label.setToolTip(
-            f"当前只创建 {len(self._wallpaper_cards)} 张可视区域附近的卡片控件，共 {len(self.visible_rows)} 张壁纸"
-        )
         if self.selection_mode:
             self.count_label.setText(f"共 {len(self.visible_rows)} 张壁纸 · 已选择 {len(self.selected_ids)} 张")
 
