@@ -93,6 +93,30 @@ def ensure_storage():
         )""")
         db.execute("INSERT OR IGNORE INTO categories(name) SELECT DISTINCT category FROM wallpapers WHERE category NOT IN ('', '未分类')")
 
+class ChineseLineEdit(QLineEdit):
+    """使用中文动作的输入框右键菜单，避免系统默认英文菜单。"""
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        actions = [
+            ("撤销", self.undo, self.isUndoAvailable()),
+            ("重做", self.redo, self.isRedoAvailable()),
+            (None, None, False),
+            ("剪切", self.cut, self.hasSelectedText()),
+            ("复制", self.copy, self.hasSelectedText()),
+            ("粘贴", self.paste, self.isEnabled()),
+            ("删除", self.del_, self.hasSelectedText()),
+            (None, None, False),
+            ("全选", self.selectAll, bool(self.text())),
+        ]
+        for label, callback, enabled in actions:
+            if label is None:
+                menu.addSeparator()
+            else:
+                action = menu.addAction(label)
+                action.setEnabled(enabled)
+                action.triggered.connect(callback)
+        menu.exec(event.globalPos())
+
 class PreviewDialog(QDialog):
     def __init__(self, rows, start_index=0, parent=None):
         super().__init__(parent)
@@ -254,11 +278,11 @@ class WallpaperCard(QFrame):
         self.image_path = str(image_path)
         self.cover = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(9, 9, 9, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(5, 5, 5, 6)
+        layout.setSpacing(4)
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setFixedHeight(150)
+        cover.setFixedHeight(138)
         cover.setStyleSheet("background:#0e1016;border-radius:9px;")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
@@ -405,7 +429,7 @@ class MainWindow(QMainWindow):
         self.theme_button = QPushButton()
         self.theme_button.clicked.connect(self.toggle_theme)
         header.addWidget(self.theme_button)
-        self.search = QLineEdit()
+        self.search = ChineseLineEdit()
         self.search.setPlaceholderText("搜索壁纸名称或分类…")
         self.search.setFixedWidth(260)
         self.search.textChanged.connect(self.refresh)
@@ -421,9 +445,9 @@ class MainWindow(QMainWindow):
 
         self.grid_host = QWidget()
         self.grid = QGridLayout(self.grid_host)
-        self.grid.setContentsMargins(0, 12, 0, 12)
-        self.grid.setHorizontalSpacing(14)
-        self.grid.setVerticalSpacing(14)
+        self.grid.setContentsMargins(0, 8, 0, 8)
+        self.grid.setHorizontalSpacing(8)
+        self.grid.setVerticalSpacing(8)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setWidget(self.grid_host)
@@ -458,24 +482,33 @@ class MainWindow(QMainWindow):
         self.visible_rows = filtered
         self.count_label.setText(f"共 {len(filtered)} 张壁纸  ·  图片存储于本地")
         categories = self.category_names()
+        self.grid_columns = 5
         for index, row in enumerate(filtered):
             path = IMAGE_DIR / row[1]
             card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, categories)
             self._wallpaper_cards.append(card)
-            self.grid.addWidget(card, index // 4, index % 4)
-        self.grid.setRowStretch((len(filtered) + 3) // 4, 1)
+            self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
+        self.grid.setRowStretch((len(filtered) + self.grid_columns - 1) // self.grid_columns, 1)
         self._refresh_categories(rows)
         self.load_visible_thumbnails()
 
     def load_visible_thumbnails(self):
         if not hasattr(self, "_wallpaper_cards") or not self._wallpaper_cards:
             return
-        viewport = self.scroll.viewport()
-        visible_rect = QRect(
-            self.grid_host.mapFrom(viewport, QPoint(0, 0)), viewport.size()
-        ).adjusted(0, -180, 0, 180)
-        for card in self._wallpaper_cards:
-            if card.cover.pixmap().isNull() and card.geometry().intersects(visible_rect):
+        # 根据滚动位置只检查可视区域上下各一行，避免每次滚动遍历全部卡片。
+        if not self._wallpaper_cards:
+            return
+        columns = getattr(self, "grid_columns", 5)
+        first_card = self._wallpaper_cards[0]
+        row_step = max(1, first_card.height() + self.grid.verticalSpacing())
+        scroll_top = self.scroll.verticalScrollBar().value()
+        viewport_height = self.scroll.viewport().height()
+        first_row = max(0, scroll_top // row_step - 1)
+        last_row = (scroll_top + viewport_height) // row_step + 1
+        start = first_row * columns
+        stop = min(len(self._wallpaper_cards), (last_row + 1) * columns)
+        for card in self._wallpaper_cards[start:stop]:
+            if card.cover.pixmap().isNull():
                 thumbnail = self.thumbnail_for(Path(card.image_path).name)
                 card.image_path = str(thumbnail or card.image_path)
                 card.load_thumbnail()
