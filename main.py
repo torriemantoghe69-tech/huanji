@@ -403,7 +403,13 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        target_size = QSize(300, 190)
+        # 横屏和竖屏统一放进同一个固定预览框，完整显示原图比例，不裁切。
+        # 使用实际预览框尺寸缩放，避免固定 300px 宽在较窄卡片中被左右截断。
+        target_size = self.cover.contentsRect().size()
+        if target_size.width() < 2 or target_size.height() < 2:
+            target_size = QSize(268, 190)
+        self.cover.setScaledContents(False)
+        self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover.setPixmap(pix.scaled(
             target_size, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
