@@ -729,6 +729,7 @@ class MainWindow(QMainWindow):
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
+        self.scroll.viewport().installEventFilter(self)
         self._wallpaper_cards = {}
         self._card_row_height = 250
         content.addWidget(self.scroll, 1)
@@ -811,9 +812,9 @@ class MainWindow(QMainWindow):
                 self.set_wallpaper, self._card_categories,
                 parent=self.grid_host
             )
-            card.setMinimumWidth(0)
-            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            # 卡片填满固定的网格单元，不单独锁定像素宽度，避免翻页时向左/向右跳动。
+            card.setFixedWidth(self._card_column_width())
+            card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+            # 两列使用由 viewport 计算出的相同宽度，不再随页面内容重新分配。
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
 
@@ -829,27 +830,30 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._apply_card_column_widths)
 
     def _card_column_width(self):
-        # 两列始终各占一半可用宽度；即使最后一页只有一张图，也不允许该卡片铺满整行。
-        if not hasattr(self, "scroll") or not hasattr(self, "grid"):
-            return 280
+        # 以滚动视口为唯一宽度基准，确保翻页/筛选后列宽不受内容 sizeHint 影响。
         margins = self.grid.contentsMargins()
-        available = self.scroll.viewport().width()
+        available = max(1, self.scroll.viewport().width())
         spacing = self.grid.horizontalSpacing()
-        usable = max(560, available - margins.left() - margins.right() - spacing)
-        return max(280, usable // 2)
+        return max(1, (available - margins.left() - margins.right() - spacing) // 2)
 
     def _apply_card_column_widths(self):
         if not hasattr(self, "grid") or not hasattr(self, "scroll"):
             return
-        # 两列使用相同伸缩权重，卡片宽度由稳定的视口和网格列共同决定。
-        # 不给单张卡片设置固定宽度，避免页面切换时网格重新计算造成横向位移。
+        viewport_width = max(1, self.scroll.viewport().width())
+        # 内容画布始终与 viewport 等宽，避免 QScrollArea 按当前页内容重新估算宽度。
+        self.grid_host.setFixedWidth(viewport_width)
+        card_width = self._card_column_width()
         for column in range(2):
-            self.grid.setColumnMinimumWidth(column, 0)
-            self.grid.setColumnStretch(column, 1)
+            self.grid.setColumnMinimumWidth(column, card_width)
+            self.grid.setColumnStretch(column, 0)
         for card in self._wallpaper_cards.values():
-            card.setMinimumWidth(0)
-            card.setMaximumWidth(16777215)
-            card.setSizePolicy(QSizePolicy.Policy.Expanding, card.sizePolicy().verticalPolicy())
+            card.setFixedWidth(card_width)
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, "scroll", None).viewport() if hasattr(self, "scroll") else False:
+            if event.type() == QEvent.Type.Resize:
+                QTimer.singleShot(0, self._apply_card_column_widths)
+        return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -920,11 +924,9 @@ class MainWindow(QMainWindow):
                 self.set_wallpaper, self._card_categories,
                     parent=self.grid_host
             )
-            card.setMinimumWidth(0)
-            card.setMinimumWidth(0)
-            card.setMaximumWidth(16777215)
+            card.setFixedWidth(self._card_column_width())
             card.setFixedHeight(self._virtual_row_height)
-            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             self._wallpaper_cards[index] = card
             self.grid.addWidget(card, index // columns, index % columns)
             thumbnail = self.thumbnail_for(row[1])
