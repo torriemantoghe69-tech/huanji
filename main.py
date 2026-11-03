@@ -676,7 +676,9 @@ class MainWindow(QMainWindow):
         content.addWidget(self.scroll, 1)
         # 分页控件固定在内容区底部，不再占用缩略图上方空间。
         content.addLayout(pagination)
+        outer.addWidget(sidebar)
         outer.addLayout(content, 1)
+        self.setCentralWidget(root)
 
     def rows(self):
         with sqlite3.connect(DB_PATH) as db:
