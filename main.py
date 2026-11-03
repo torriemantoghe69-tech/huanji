@@ -450,59 +450,80 @@ class WallpaperCard(QFrame):
     def __init__(self, row, image_path, on_open, on_favorite, on_delete, on_rename, on_category, on_wallpaper, categories, parent=None):
         super().__init__(parent)
         self.setObjectName("WallpaperCard")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(0)
         self.row = row
         self.image_path = str(image_path)
-        self.cover = None
+        self._on_open = on_open
+        self._on_favorite = on_favorite
+        self._on_delete = on_delete
+        self._on_rename = on_rename
+        self._on_category = on_category
+        self._on_wallpaper = on_wallpaper
+        self._categories = list(categories)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 6)
         layout.setSpacing(4)
         self.card_layout = layout
-        cover_host = QWidget(self)
-        cover_host.setObjectName("CardCoverHost")
-        cover_host.setFixedHeight(240)
-        cover_layout = QHBoxLayout(cover_host)
-        cover_layout.setContentsMargins(0, 0, 0, 0)
-        cover_layout.setSpacing(0)
-        cover = QLabel(cover_host)
-        cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setFixedHeight(240)
-        cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        cover.setObjectName("CardCover")
-        self.cover = cover
-        self.cover_host = cover_host
-        self.cover_layout = cover_layout
+        self.cover_host = QWidget(self)
+        self.cover_host.setObjectName("CardCoverHost")
+        self.cover_host.setFixedHeight(240)
+        self.cover_layout = QHBoxLayout(self.cover_host)
+        self.cover_layout.setContentsMargins(8, 8, 8, 8)
+        self.cover_layout.setSpacing(0)
+        self.cover = QLabel(self.cover_host)
+        self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover.setFixedHeight(222)
+        self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.cover.setObjectName("CardCover")
         self._portrait_layout = None
-        # 先读取图片尺寸并确定竖屏卡片的最终几何尺寸，避免翻页后
-        # 缩略图异步加载完成时卡片突然从横向占位变成窄竖屏框。
-        source_size = QImageReader(self.image_path).size()
-        if source_size.isValid():
-            self._set_portrait_layout(source_size.height() > source_size.width(), source_size)
-        cover.setText("滚动到此处加载预览")
-        cover.mousePressEvent = lambda event: on_open(row)
-        cover_layout.addWidget(cover)
-        layout.addWidget(cover_host)
-        title = QLabel(row[2])
-        title.setObjectName("CardTitle")
-        title.setStyleSheet("font-weight:600;padding:1px 2px;")
-        title.setWordWrap(False)
-        layout.addWidget(title)
+        self.cover.setText("正在加载预览…")
+        self.cover.mousePressEvent = lambda event: self._on_open(self.row)
+        self.cover_layout.addWidget(self.cover)
+        layout.addWidget(self.cover_host)
+        self.title_label = QLabel()
+        self.title_label.setObjectName("CardTitle")
+        self.title_label.setStyleSheet("font-weight:600;padding:1px 2px;")
+        self.title_label.setWordWrap(False)
+        layout.addWidget(self.title_label)
         bottom = QHBoxLayout()
-        cat = QLabel(row[3])
-        cat.setObjectName("CardCategory")
-        bottom.addWidget(cat)
+        self.category_label = QLabel()
+        self.category_label.setObjectName("CardCategory")
+        bottom.addWidget(self.category_label)
         bottom.addStretch()
-        fav = QPushButton("♥" if row[4] else "♡")
-        fav.setFixedWidth(35)
-        fav.clicked.connect(lambda: on_favorite(row[0], row[4]))
-        bottom.addWidget(fav)
-        more = QPushButton("···")
-        more.setFixedWidth(38)
-        # 菜单只在用户点击“···”时创建，避免卡片初始化时残留无用的隐藏菜单。
-        more.clicked.connect(lambda: self.show_menu(more, on_delete, on_rename, on_category, on_wallpaper, categories))
-        bottom.addWidget(more)
+        self.favorite_button = QPushButton()
+        self.favorite_button.setFixedWidth(35)
+        self.favorite_button.clicked.connect(self._toggle_favorite)
+        bottom.addWidget(self.favorite_button)
+        self.more_button = QPushButton("···")
+        self.more_button.setFixedWidth(38)
+        self.more_button.clicked.connect(self._show_current_menu)
+        bottom.addWidget(self.more_button)
         layout.addLayout(bottom)
+        self.update_row(row, categories)
+
+    def _toggle_favorite(self):
+        self._on_favorite(self.row[0], self.row[4])
+
+    def _show_current_menu(self):
+        self.show_menu(self.more_button, self._on_delete, self._on_rename,
+                       self._on_category, self._on_wallpaper, self._categories)
+
+    def update_row(self, row, categories):
+        changed_image = self.row[1] != row[1]
+        self.row = row
+        self._categories = list(categories)
+        self.title_label.setText(row[2])
+        self.category_label.setText(row[3])
+        self.favorite_button.setText("♥" if row[4] else "♡")
+        if changed_image:
+            self.image_path = str(IMAGE_DIR / row[1])
+            self._portrait_layout = None
+            self.cover.setPixmap(QPixmap())
+            self.cover.setText("正在加载预览…")
+            source_size = QImageReader(self.image_path).size()
+            if source_size.isValid():
+                self._set_portrait_layout(source_size.height() > source_size.width(), source_size)
 
     def _set_portrait_layout(self, is_portrait, image_size=None):
         # Windows 资源管理器式统一缩略图画布：所有卡片预览区域等大，
@@ -733,7 +754,7 @@ class MainWindow(QMainWindow):
         self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
         self.scroll.viewport().installEventFilter(self)
-        self._wallpaper_cards = {}
+        self._wallpaper_cards = OrderedDict()
         self._card_row_height = 250
         content.addWidget(self.scroll, 1)
         # 分页控件固定在内容区底部，不再占用缩略图上方空间。
@@ -747,22 +768,14 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
-        # 暂停网格重绘，避免翻页重建卡片时短暂露出空白帧。
+        # 保留已创建的卡片对象：刷新只调整网格位置，不销毁/重建控件。
         self.grid_host.setUpdatesEnabled(False)
-        # 每次刷新都递增代次；旧页面尚未完成的缩略图任务会被丢弃。
         self._thumbnail_generation += 1
         generation = self._thumbnail_generation
         QToolTip.hideText()
         for card in self._wallpaper_cards.values():
             self.grid.removeWidget(card)
-            card.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             card.hide()
-            card.deleteLater()
-        self._wallpaper_cards.clear()
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
 
         query = self.search.text().strip().lower()
         rows = self.rows()
@@ -807,24 +820,49 @@ class MainWindow(QMainWindow):
             self.grid.setColumnStretch(column, 1)
         self._card_categories = self.category_names()
 
-        # 先快速建立占位卡片并完成翻页，缩略图由后台线程池逐张解码。
+        # 在创建/放入网格前先固定画布宽度和卡片宽度，避免显示后再二次缩放。
+        viewport_width = max(1, self.scroll.viewport().width())
+        self.grid_host.setFixedWidth(viewport_width)
+        card_width = self._card_column_width()
+        active_ids = set()
         for index, row in enumerate(self.page_rows):
-            card = WallpaperCard(
-                row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
-                self.delete_image, self.rename_image, self.move_category,
-                self.set_wallpaper, self._card_categories,
-                parent=self.grid_host
-            )
-            card.setFixedWidth(self._card_column_width())
-            card.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-            # 两列使用由 viewport 计算出的相同宽度，不再随页面内容重新分配。
-            self._wallpaper_cards[index] = card
+            uid = row[0]
+            active_ids.add(uid)
+            card = self._wallpaper_cards.get(uid)
+            if card is None:
+                card = WallpaperCard(
+                    row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
+                    self.delete_image, self.rename_image, self.move_category,
+                    self.set_wallpaper, self._card_categories,
+                    parent=self.grid_host
+                )
+                self._wallpaper_cards[uid] = card
+            else:
+                card.update_row(row, self._card_categories)
+            card.setFixedSize(card_width, card.sizeHint().height())
+            card.show()
             self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
 
-            task = ThumbnailTask(generation, index, IMAGE_DIR / row[1])
-            task.signals.finished.connect(self._on_thumbnail_ready)
-            self._thumbnail_jobs[(generation, index)] = task
-            self._thumbnail_pool.start(task)
+            # 缩略图缓存命中时直接使用；否则异步生成并更新对应卡片。
+            cached_path = self.thumbnail_for(row[1])
+            if cached_path.exists():
+                card.image_path = str(cached_path)
+                card.load_thumbnail()
+            else:
+                task = ThumbnailTask(generation, index, IMAGE_DIR / row[1])
+                task.signals.finished.connect(self._on_thumbnail_ready)
+                self._thumbnail_jobs[(generation, index)] = task
+                self._thumbnail_pool.start(task)
+
+        # 限制隐藏卡片缓存规模，避免大型图库长期保留过多 QWidget。
+        while len(self._wallpaper_cards) > 120:
+            oldest_uid = next(iter(self._wallpaper_cards))
+            if oldest_uid in active_ids:
+                self._wallpaper_cards.move_to_end(oldest_uid)
+                continue
+            old_card = self._wallpaper_cards.pop(oldest_uid)
+            self.grid.removeWidget(old_card)
+            old_card.deleteLater()
 
         self._refresh_categories(rows)
         self.scroll.verticalScrollBar().setValue(0)
@@ -850,7 +888,8 @@ class MainWindow(QMainWindow):
             self.grid.setColumnMinimumWidth(column, card_width)
             self.grid.setColumnStretch(column, 0)
         for card in self._wallpaper_cards.values():
-            card.setFixedWidth(card_width)
+            if card.isVisible():
+                card.setFixedSize(card_width, card.sizeHint().height())
 
     def eventFilter(self, watched, event):
         if watched is getattr(self, "scroll", None).viewport() if hasattr(self, "scroll") else False:
