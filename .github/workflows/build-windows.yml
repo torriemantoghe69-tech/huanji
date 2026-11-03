@@ -19,7 +19,7 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
       - name: Check Python syntax
-        run: python -m py_compile main.py
+        run: python -m py_compile main.py launcher.py
       - name: Build windowed executable
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed
@@ -49,7 +49,7 @@ jobs:
           --exclude-module PySide6.QtWebEngineCore
           --exclude-module PySide6.QtWebEngineWidgets
           --exclude-module PySide6.QtWebEngineQuick
-          main.py
+          launcher.py
       - name: Add diagnostic launcher
         shell: pwsh
         run: |
