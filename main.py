@@ -560,7 +560,9 @@ class MainWindow(QMainWindow):
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.grid_host.setMinimumWidth(0)
         self.scroll.setWidget(self.grid_host)
-        self._wallpaper_cards = []
+        self._wallpaper_cards = {}
+        self._virtual_row_height = 250
+        self._virtual_overscan_rows = 1
         self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         content.addWidget(self.scroll, 1)
         outer.addLayout(content, 1)
@@ -570,7 +572,11 @@ class MainWindow(QMainWindow):
             return db.execute("SELECT id,filename,title,category,favorite FROM wallpapers ORDER BY added_at DESC").fetchall()
 
     def refresh(self, *_):
-        self._wallpaper_cards = []
+        # 只保留视口附近的卡片控件，数据库中的完整壁纸列表仍然保留。
+        for card in self._wallpaper_cards.values():
+            self.grid.removeWidget(card)
+            card.deleteLater()
+        self._wallpaper_cards.clear()
         while self.grid.count():
             item = self.grid.takeAt(0)
             if item.widget():
@@ -594,12 +600,13 @@ class MainWindow(QMainWindow):
         self.grid_columns = 5
         for column in range(self.grid_columns):
             self.grid.setColumnStretch(column, 1)
-        for index, row in enumerate(filtered):
-            path = IMAGE_DIR / row[1]
-            card = WallpaperCard(row, path, self.open_preview, self.toggle_favorite, self.delete_image, self.rename_image, self.move_category, self.set_wallpaper, categories)
-            self._wallpaper_cards.append(card)
-            self.grid.addWidget(card, index // self.grid_columns, index % self.grid_columns)
-        self.grid.setRowStretch((len(filtered) + self.grid_columns - 1) // self.grid_columns, 1)
+        self._card_categories = categories
+        self._virtual_row_count = (len(filtered) + self.grid_columns - 1) // self.grid_columns
+        self.grid_host.setMinimumHeight(
+            self._virtual_row_count * (self._virtual_row_height + self.grid.verticalSpacing()) + 16
+        )
+        for grid_row in range(self._virtual_row_count):
+            self.grid.setRowMinimumHeight(grid_row, self._virtual_row_height)
         self._refresh_categories(rows)
         self.load_visible_thumbnails()
 
@@ -609,25 +616,47 @@ class MainWindow(QMainWindow):
             self._thumbnail_timer.start()
 
     def load_visible_thumbnails(self):
-        if not hasattr(self, "_wallpaper_cards") or not self._wallpaper_cards:
+        if not hasattr(self, "_wallpaper_cards") or not hasattr(self, "visible_rows"):
             return
-        # 根据滚动位置只检查可视区域上下各一行，避免每次滚动遍历全部卡片。
-        if not self._wallpaper_cards:
-            return
+        # 虚拟化：视口上下各预加载一行，其余卡片控件立即回收。
         columns = getattr(self, "grid_columns", 5)
-        first_card = self._wallpaper_cards[0]
-        row_step = max(1, (first_card.height() or first_card.sizeHint().height()) + self.grid.verticalSpacing())
+        row_step = self._virtual_row_height + self.grid.verticalSpacing()
         scroll_top = self.scroll.verticalScrollBar().value()
-        viewport_height = self.scroll.viewport().height()
-        first_row = max(0, scroll_top // row_step - 1)
-        last_row = (scroll_top + viewport_height) // row_step + 1
+        viewport_height = max(1, self.scroll.viewport().height())
+        first_row = max(0, scroll_top // row_step - self._virtual_overscan_rows)
+        last_row = min(
+            max(0, self._virtual_row_count - 1),
+            (scroll_top + viewport_height) // row_step + self._virtual_overscan_rows
+        )
         start = first_row * columns
-        stop = min(len(self._wallpaper_cards), (last_row + 1) * columns)
-        for card in self._wallpaper_cards[start:stop]:
-            if card.cover.pixmap().isNull():
-                thumbnail = self.thumbnail_for(Path(card.image_path).name)
-                card.image_path = str(thumbnail or card.image_path)
-                card.load_thumbnail()
+        stop = min(len(self.visible_rows), (last_row + 1) * columns)
+        wanted = set(range(start, stop))
+
+        for index in list(self._wallpaper_cards):
+            if index not in wanted:
+                card = self._wallpaper_cards.pop(index)
+                self.grid.removeWidget(card)
+                card.deleteLater()
+
+        for index in sorted(wanted):
+            if index in self._wallpaper_cards:
+                continue
+            row = self.visible_rows[index]
+            card = WallpaperCard(
+                row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
+                self.delete_image, self.rename_image, self.move_category,
+                self.set_wallpaper, self._card_categories
+            )
+            card.setFixedHeight(self._virtual_row_height)
+            self._wallpaper_cards[index] = card
+            self.grid.addWidget(card, index // columns, index % columns)
+            thumbnail = self.thumbnail_for(row[1])
+            card.image_path = str(thumbnail or (IMAGE_DIR / row[1]))
+            card.load_thumbnail()
+
+        self.count_label.setToolTip(
+            f"当前只创建 {len(self._wallpaper_cards)} 张可视区域附近的卡片控件，共 {len(self.visible_rows)} 张壁纸"
+        )
 
     def _refresh_categories(self, rows=None):
         with sqlite3.connect(DB_PATH) as db:
