@@ -390,7 +390,7 @@ class WallpaperCard(QFrame):
         layout.setSpacing(4)
         cover = QLabel()
         cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        cover.setFixedHeight(190)
+        cover.setFixedHeight(240)
         cover.setObjectName("CardCover")
         self.cover = cover
         cover.setText("滚动到此处加载预览")
@@ -440,33 +440,17 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        # 根据图片方向调整预览框：横屏框更宽高比协调，减少左右空白；竖屏完整显示且限制高度。
-        self._image_ratio = pix.height() / max(1, pix.width())
-        self._update_cover_height()
+        # 所有卡片使用统一高度，保证每行左右两张卡片尺寸一致。
+        # 图片按原始比例完整显示，竖屏壁纸不会被裁切或拉伸。
         target_size = self.cover.contentsRect().size()
         if target_size.width() < 2 or target_size.height() < 2:
-            target_size = QSize(268, 190)
+            target_size = QSize(268, 240)
         self.cover.setScaledContents(False)
         self.cover.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover.setPixmap(pix.scaled(
             target_size, Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         ))
-
-    def _update_cover_height(self):
-        if not hasattr(self, "cover"):
-            return
-        ratio = getattr(self, "_image_ratio", None)
-        if ratio is None:
-            return
-        # 横屏预览框按接近 16:9 的比例增高，避免宽图缩在矮框中央留下大块左右空白；
-        # 竖屏图限制预览框高度，完整显示原图，不裁切。
-        desired = int(max(190, min(340, self.width() * ratio)))
-        self.cover.setFixedHeight(desired)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._update_cover_height()
 
     def set_selection_state(self, selection_mode, selected=None):
         """更新现有卡片的选择控件，不重建卡片或其子窗口。"""
