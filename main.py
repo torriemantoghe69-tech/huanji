@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QEvent
 from PySide6.QtGui import QPixmap, QShortcut, QKeySequence, QImageReader
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -111,6 +111,8 @@ class PreviewDialog(QDialog):
         self.image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image.setStyleSheet("background:#08090d;border-radius:12px;")
         self.image.setMinimumSize(1, 1)
+        self.image.installEventFilter(self)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         layout.addWidget(self.image, 1)
 
         toolbar = QHBoxLayout()
@@ -173,6 +175,33 @@ class PreviewDialog(QDialog):
         else:
             self.image.setText("")
             self.image.setPixmap(QPixmap.fromImage(image))
+
+    def eventFilter(self, watched, event):
+        # 在图片区域滚动鼠标滚轮即可切换上一张/下一张。
+        if watched is self.image and event.type() == QEvent.Type.Wheel:
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self.show_previous()
+                event.accept()
+                return True
+            if delta < 0:
+                self.show_next()
+                event.accept()
+                return True
+        return super().eventFilter(watched, event)
+
+    def wheelEvent(self, event):
+        # 鼠标滚轮位于预览窗口其他空白区域时同样可以切换。
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self.show_previous()
+            event.accept()
+            return
+        if delta < 0:
+            self.show_next()
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def show_previous(self):
         if len(self.rows) > 1:
