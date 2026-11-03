@@ -89,8 +89,9 @@ QFrame#WallpaperCard { background:#ffffff; border:1px solid #e1e5ef; border-radi
 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#f8f8ff; }
 QFrame#WallpaperCard[portrait="true"] { background:transparent; border:1px solid transparent; }
 QFrame#WallpaperCard[portrait="true"]:hover { background:transparent; border:1px solid transparent; }
-QWidget#CardCoverHost[portrait="true"] { background:#e9edf5; border:1px solid #e1e5ef; border-radius:9px; }
+QWidget#CardCoverHost[portrait="true"] { background:#e9edf5; border:1px solid #e1e5ef; border-radius:9px; padding:6px; }
 QLabel#CardCover { background:#e9edf5; color:#788196; border-radius:8px; }
+QLabel#CardCover[portrait="true"] { background:transparent; border:0px; }
 QLabel#CardCategory { color:#788196; font-size:11px; }
 QDialog { background:#f4f6fb; }
 """
@@ -122,8 +123,9 @@ QFrame#WallpaperCard { background:#1a1e29; border:1px solid #2b3040; border-radi
 QFrame#WallpaperCard:hover { border:1px solid #8174ed; background:#202536; }
 QFrame#WallpaperCard[portrait="true"] { background:transparent; border:1px solid transparent; }
 QFrame#WallpaperCard[portrait="true"]:hover { background:transparent; border:1px solid transparent; }
-QWidget#CardCoverHost[portrait="true"] { background:#0e1016; border:1px solid #2b3040; border-radius:9px; }
+QWidget#CardCoverHost[portrait="true"] { background:#0e1016; border:1px solid #2b3040; border-radius:9px; padding:6px; }
 QLabel#CardCover { background:#0e1016; color:#9299aa; border-radius:8px; }
+QLabel#CardCover[portrait="true"] { background:transparent; border:0px; }
 QLabel#CardCategory { color:#9299aa; font-size:11px; }
 QDialog { background:#101219; }
 """
@@ -315,39 +317,30 @@ class PreviewDialog(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "image") and hasattr(self, "position_label"):
-            self.show_current()
+        self.show_current()
 
 class SmoothScrollArea(QScrollArea):
-    """使用小步长像素滚动，减少鼠标滚轮上下滚动的跳跃感。"""
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll_animation = QPropertyAnimation(self.verticalScrollBar(), b"value", self)
-        self._scroll_animation.setDuration(170)
+        self._scroll_animation.setDuration(180)
         self._scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def wheelEvent(self, event):
-        # 只处理垂直滚轮；忽略触控板/鼠标的横向滚动分量。
-        delta_y = event.pixelDelta().y()
-        if not delta_y:
-            delta_y = event.angleDelta().y() / 120.0 * 105
-        if delta_y:
-            bar = self.verticalScrollBar()
-            target = max(bar.minimum(), min(bar.maximum(), bar.value() - int(delta_y)))
-            self._scroll_animation.stop()
-            self._scroll_animation.setStartValue(bar.value())
-            self._scroll_animation.setEndValue(target)
-            self._scroll_animation.start()
-            event.accept()
-            return
+        # Smooth scrolling
+        delta = event.angleDelta().y()
+        if delta == 0:
+            return super().wheelEvent(event)
+        steps = delta / 120.0
+        bar = self.verticalScrollBar()
+        self._scroll_animation.stop()
+        self._scroll_animation.setStartValue(bar.value())
+        self._scroll_animation.setEndValue(int(bar.value() - steps * 120))
+        self._scroll_animation.start()
         event.accept()
-
 
 class ThumbnailSignals(QObject):
     finished = Signal(int, int, str)
-
 
 class ThumbnailTask(QRunnable):
     """在线程池中读取并生成缩略图，避免翻页时阻塞界面线程。"""
@@ -454,35 +447,46 @@ class WallpaperCard(QFrame):
         else:
             PIXMAP_CACHE.move_to_end(cache_key)
         self.cover.setText("")
-        # 竖屏图片的预览容器只保留图片实际显示宽度，不再让空白区域也被大框包围。
-        # 横屏图片仍使用整行宽度；两种图片的预览高度保持一致。
         self.cover.setFixedHeight(240)
         if pix.height() > pix.width():
+            # 竖屏：只保留图片外一圈很小的留白，不再让整张卡片都被空白包住。
+            pad = 6
+            inner_h = max(1, 240 - pad * 2)
+            portrait_width = max(1, int(inner_h * pix.width() / max(1, pix.height())))
+            portrait_width = min(240, portrait_width)
             self.setProperty("portrait", True)
             self.cover_host.setProperty("portrait", True)
+            self.cover.setProperty("portrait", True)
             self.style().unpolish(self)
             self.style().polish(self)
             self.cover_host.style().unpolish(self.cover_host)
             self.cover_host.style().polish(self.cover_host)
-            portrait_width = max(1, int(240 * pix.width() / max(1, pix.height())))
-            portrait_width = min(240, portrait_width)
-            self.cover_host.setFixedWidth(portrait_width)
+            self.cover.style().unpolish(self.cover)
+            self.cover.style().polish(self.cover)
+            self.cover_layout.setContentsMargins(pad, pad, pad, pad)
+            self.cover_host.setFixedWidth(portrait_width + pad * 2)
             self.cover.setFixedWidth(portrait_width)
+            self.cover.setFixedHeight(inner_h)
             self.card_layout.setAlignment(self.cover_host, Qt.AlignmentFlag.AlignHCenter)
             self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignCenter)
         else:
             self.setProperty("portrait", False)
             self.cover_host.setProperty("portrait", False)
+            self.cover.setProperty("portrait", False)
             self.style().unpolish(self)
             self.style().polish(self)
             self.cover_host.style().unpolish(self.cover_host)
             self.cover_host.style().polish(self.cover_host)
+            self.cover.style().unpolish(self.cover)
+            self.cover.style().polish(self.cover)
+            self.cover_layout.setContentsMargins(0, 0, 0, 0)
             self.cover_host.setMinimumWidth(0)
             self.cover_host.setMaximumWidth(16777215)
             self.cover_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.cover.setMinimumWidth(0)
             self.cover.setMaximumWidth(16777215)
             self.cover.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.cover.setFixedHeight(240)
             self.card_layout.setAlignment(self.cover_host, Qt.Alignment())
             self.cover_layout.setAlignment(self.cover, Qt.AlignmentFlag.AlignVCenter)
         target_size = self.cover.contentsRect().size()
@@ -534,144 +538,112 @@ class MainWindow(QMainWindow):
         self.show_favorites = False
         self.settings = QSettings("Huanjing", "WallpaperGallery")
         saved_theme = self.settings.value("theme", "dark")
-        self.theme = saved_theme if saved_theme in ("light", "dark") else "dark"
+        self.set_theme(saved_theme)
+        self.search = ChineseLineEdit()
+        self.search.setPlaceholderText("搜索标题或分类…")
+        self.search.textChanged.connect(self.refresh)
         self.selected_ids = set()
         self.selection_mode = False
         self.current_page = 0
-
         # 缩略图后台任务状态必须在首次 refresh() 前初始化。
         # refresh() 会立即递增 generation 并提交 ThumbnailTask。
         self._thumbnail_generation = 0
         self._thumbnail_jobs = {}
         self._thumbnail_pool = QThreadPool.globalInstance()
         self._thumbnail_pool.setMaxThreadCount(max(2, min(4, QThreadPool.globalInstance().maxThreadCount())))
-
         self.page_size = max(1, min(40, int(self.settings.value("page_size", 4))))
         self._build_ui()
-        self.apply_theme()
+        self._thumbnail_timer = QTimer(self)
+        self._thumbnail_timer.setSingleShot(True)
+        self._thumbnail_timer.setInterval(120)
+        self._thumbnail_timer.timeout.connect(self.load_visible_thumbnails)
+        self._virtual_row_height = 250
+        self._virtual_overscan_rows = 1
+        self.scroll.verticalScrollBar().valueChanged.connect(self.schedule_visible_thumbnails)
         self.refresh()
 
-    def apply_theme(self):
-        # 从模块全局读取样式，避免主题切换引用到旧版本/缺失的局部变量。
-        app = QApplication.instance()
-        if app is None:
-            raise RuntimeError("Qt application is not initialized")
-        light_style = globals().get(
-            "LIGHT_STYLE",
-            "QWidget { background:#f4f6fb; color:#202534; }"
-        )
-        dark_style = globals().get(
-            "DARK_STYLE",
-            "QWidget { background:#11131a; color:#edf0f7; }"
-        )
-        if self.theme not in ("light", "dark"):
-            self.theme = "dark"
-        app.setStyleSheet(light_style if self.theme == "light" else dark_style)
-        app.setProperty("gallery_theme", self.theme)
-        self.theme_button.setText("☀ 白天模式" if self.theme == "dark" else "🌙 夜间模式")
+    def set_theme(self, mode):
+        self.theme = mode if mode in ("light", "dark") else "dark"
         self.settings.setValue("theme", self.theme)
-        logging.info("Theme applied: %s", self.theme)
-
-    def toggle_theme(self):
-        previous_theme = self.theme
-        self.theme = "light" if previous_theme == "dark" else "dark"
-        try:
-            self.apply_theme()
-        except Exception:
-            self.theme = previous_theme
-            logging.exception("Failed to switch theme")
-            QMessageBox.warning(
-                self, "主题切换失败",
-                f"切换主题时发生错误。程序已恢复原主题。\n日志位置：{LOG_PATH}"
-            )
+        self._style = LIGHT_STYLE if self.theme == "light" else DARK_STYLE
+        self.setStyleSheet(self._style)
 
     def _build_ui(self):
+        # 主体布局：左侧分类栏 + 右侧内容区
         root = QWidget()
-        root.setAcceptDrops(True)
-        self.setCentralWidget(root)
         outer = QHBoxLayout(root)
         outer.setContentsMargins(18, 18, 18, 18)
-        outer.setSpacing(16)
+        outer.setSpacing(18)
 
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(220)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(16, 18, 16, 16)
+        side.setContentsMargins(16, 16, 16, 16)
+        side.setSpacing(12)
         brand = QLabel("✦ 幻境壁纸馆")
         brand.setObjectName("Brand")
         side.addWidget(brand)
-        side.addSpacing(14)
         side.addWidget(QLabel("图片空间", objectName="Muted"))
-        self.nav = QListWidget()
-        for name in ["横屏壁纸", "竖屏壁纸", "我的收藏", "未分类"]:
-            self.nav.addItem(name)
-        self.nav.setCurrentRow(0)
-        self.nav.currentTextChanged.connect(self.change_category)
-        side.addWidget(self.nav)
-        side.addSpacing(10)
-        side.addWidget(QLabel("自定义分类", objectName="Muted"))
         self.categories = QListWidget()
+        self.categories.setMinimumWidth(200)
         self.categories.currentTextChanged.connect(self.change_category)
         side.addWidget(self.categories, 1)
+        side.addWidget(QLabel("自定义分类", objectName="Muted"))
         add_cat = QPushButton("+ 新建分类")
         add_cat.clicked.connect(self.add_category)
         side.addWidget(add_cat)
-        side.addStretch()
         note = QLabel("图片仅保存在本机\n不会自动上传网络")
         note.setObjectName("Muted")
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         side.addWidget(note)
-        outer.addWidget(sidebar)
+        side.addStretch()
 
         content = QVBoxLayout()
         header = QHBoxLayout()
-        intro = QVBoxLayout()
-        heading = QLabel("我的壁纸")
-        heading.setStyleSheet("font-size:27px;font-weight:700;")
-        intro.addWidget(heading)
-        self.count_label = QLabel("收藏每一份喜欢的画面 · 也可以把图片直接拖进窗口")
-        self.count_label.setObjectName("Muted")
-        intro.addWidget(self.count_label)
-        header.addLayout(intro)
-        header.addStretch()
+        header.setSpacing(12)
+        self.search.setMinimumHeight(42)
+        header.addWidget(self.search, 1)
         self.theme_button = QPushButton()
         self.theme_button.clicked.connect(self.toggle_theme)
+        self._update_theme_button()
         header.addWidget(self.theme_button)
-        self.search = ChineseLineEdit()
-        self.search.setPlaceholderText("搜索壁纸名称或分类…")
-        self.search.setMinimumWidth(120)
-        self.search.setMaximumWidth(300)
-        self.search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.search.textChanged.connect(self.refresh)
-        header.addWidget(self.search)
+        content.addLayout(header)
+
+        title_wrap = QVBoxLayout()
+        title = QLabel("我的壁纸")
+        title.setStyleSheet("font-size:28px;font-weight:700;")
+        self.count_label = QLabel("收藏每一份喜欢的画面 · 也可以把图片直接拖进窗口")
+        self.count_label.setObjectName("Muted")
+        title_wrap.addWidget(title)
+        title_wrap.addWidget(self.count_label)
+        content.addLayout(title_wrap)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(10)
         import_btn = QPushButton("＋ 导入图片")
         import_btn.setObjectName("Primary")
         import_btn.clicked.connect(self.import_images)
-        header.addWidget(import_btn)
+        controls.addWidget(import_btn)
         folder_btn = QPushButton("导入文件夹")
         folder_btn.clicked.connect(self.import_folder)
-        header.addWidget(folder_btn)
-        content.addLayout(header)
-
-        # 将管理操作独立放到第二行，避免顶部工具栏撑大窗口最小宽度。
-        actions = QHBoxLayout()
+        controls.addWidget(folder_btn)
         self.refresh_folders_btn = QPushButton("↻ 刷新文件夹")
-        self.refresh_folders_btn.clicked.connect(self.refresh_source_folders)
-        actions.addWidget(self.refresh_folders_btn)
+        self.refresh_folders_btn.clicked.connect(self.refresh_folders)
+        controls.addWidget(self.refresh_folders_btn)
         self.select_mode_btn = QPushButton("批量选择")
-        self.select_mode_btn.clicked.connect(self.toggle_selection_mode)
-        actions.addWidget(self.select_mode_btn)
+        self.select_mode_btn.clicked.connect(self.toggle_select_mode)
+        controls.addWidget(self.select_mode_btn)
         self.select_all_btn = QPushButton("全选当前列表")
-        self.select_all_btn.clicked.connect(self.select_all_visible)
-        actions.addWidget(self.select_all_btn)
+        self.select_all_btn.clicked.connect(self.select_all_current)
+        controls.addWidget(self.select_all_btn)
         self.delete_folder_btn = QPushButton("删除文件夹壁纸")
         self.delete_folder_btn.clicked.connect(self.delete_folder_wallpapers)
-        actions.addWidget(self.delete_folder_btn)
+        controls.addWidget(self.delete_folder_btn)
         self.delete_selected_btn = QPushButton("删除已选")
-        self.delete_selected_btn.clicked.connect(self.delete_selected_images)
-        actions.addWidget(self.delete_selected_btn)
-        actions.addStretch()
-        content.addLayout(actions)
+        self.delete_selected_btn.clicked.connect(self.delete_selected)
+        controls.addWidget(self.delete_selected_btn)
+        controls.addStretch()
+        content.addLayout(controls)
 
         # 分页工具栏：默认每页 4 张，支持调整每页容量。
         pagination = QHBoxLayout()
@@ -951,230 +923,3 @@ class MainWindow(QMainWindow):
             with sqlite3.connect(DB_PATH) as db:
                 db.execute("INSERT OR IGNORE INTO source_folders(path) VALUES(?)", (folder_path,))
             self._import_paths([folder_path])
-            self.refresh_source_folders()
-
-    def refresh_source_folders(self):
-        with sqlite3.connect(DB_PATH) as db:
-            folders = [row[0] for row in db.execute("SELECT path FROM source_folders ORDER BY added_at DESC").fetchall()]
-        if not folders:
-            QMessageBox.information(self, "刷新文件夹", "还没有记录导入过的文件夹。请先点击“导入文件夹”选择一次。")
-            return
-        missing = [folder for folder in folders if not Path(folder).exists()]
-        if len(missing) == len(folders):
-            QMessageBox.warning(self, "刷新文件夹", "之前导入的文件夹都找不到了，请重新选择文件夹导入。")
-            return
-        for folder in folders:
-            if Path(folder).exists():
-                self._import_paths([folder], refresh_mode=True)
-        if missing:
-            QMessageBox.warning(self, "部分文件夹无法访问",
-                                "以下文件夹目前不可访问，已跳过刷新：\n" + "\n".join(missing[:5]))
-        self.refresh()
-
-    def _import_paths(self, paths, refresh_mode=False):
-        valid = []
-        errors = []
-        for path in paths:
-            p = Path(path)
-            if p.is_dir():
-                for file in sorted(p.rglob("*")):
-                    if file.suffix.lower() in SUPPORTED:
-                        valid.append(file)
-            elif p.suffix.lower() in SUPPORTED and p.is_file():
-                valid.append(p)
-            else:
-                errors.append(f"不支持的路径：{path}")
-        if not valid:
-            if errors and not refresh_mode:
-                QMessageBox.warning(self, "导入失败", "\n".join(errors[:5]))
-            return
-        added = 0
-        failed = []
-        with sqlite3.connect(DB_PATH) as db:
-            for src in valid:
-                try:
-                    uid = str(uuid.uuid4())
-                    ext = src.suffix.lower() or ".png"
-                    dest = IMAGE_DIR / f"{uid}{ext}"
-                    if not dest.exists():
-                        shutil.copy2(src, dest)
-                    db.execute(
-                        "INSERT OR REPLACE INTO wallpapers(id, filename, title, category, favorite, source_path) VALUES(?,?,?,?,?,?)",
-                        (uid, dest.name, src.stem, "未分类", 0, str(src.resolve()))
-                    )
-                    added += 1
-                except Exception as exc:
-                    failed.append(f"{src.name}: {exc}")
-        self.refresh()
-        msg = f"已导入/更新 {added} 张壁纸。"
-        if errors:
-            msg += f"\n{len(errors)} 个路径被跳过。"
-        if failed:
-            msg += f"\n{len(failed)} 个文件导入失败。"
-            msg += "\n" + "\n".join(failed[:8])
-        self.statusBar().showMessage(msg, 6000)
-        if failed:
-            preview = "\n".join(failed[:8])
-            if len(failed) > 8:
-                preview += f"\n另有 {len(failed) - 8} 个文件导入失败。"
-            QMessageBox.warning(self, "部分文件导入失败", preview)
-
-    def open_preview(self, row):
-        rows = self.visible_rows if hasattr(self, "visible_rows") else self.rows()
-        ids = [r[0] for r in rows]
-        try:
-            index = ids.index(row[0])
-        except ValueError:
-            index = 0
-        dlg = PreviewDialog(rows, index, self)
-        dlg.exec()
-
-    def rename_image(self, uid, old_title):
-        title, ok = QInputDialog.getText(self, "重命名壁纸", "新名称：", text=old_title)
-        title = title.strip()
-        if not ok or not title:
-            return
-        with sqlite3.connect(DB_PATH) as db:
-            db.execute("UPDATE wallpapers SET title=? WHERE id=?", (title, uid))
-        self.refresh()
-
-    def move_category(self, uid, category):
-        with sqlite3.connect(DB_PATH) as db:
-            db.execute("UPDATE wallpapers SET category=? WHERE id=?", (category, uid))
-        self.refresh()
-
-    def toggle_favorite(self, uid, favorite):
-        with sqlite3.connect(DB_PATH) as db:
-            db.execute("UPDATE wallpapers SET favorite=? WHERE id=?", (0 if favorite else 1, uid))
-        self.refresh()
-
-    def set_wallpaper(self, filename):
-        if sys.platform != "win32":
-            QMessageBox.information(self, "设置壁纸", "一键设置桌面壁纸目前仅支持 Windows。")
-            return
-        path = IMAGE_DIR / filename
-        SPI_SETDESKWALLPAPER = 20
-        try:
-            ctypes.windll.user32.SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, str(path), 3)
-            self.statusBar().showMessage("已设置为桌面壁纸", 3000)
-        except Exception as exc:
-            QMessageBox.warning(self, "设置失败", str(exc))
-
-    def category_names(self):
-        with sqlite3.connect(DB_PATH) as db:
-            rows = db.execute("SELECT name FROM categories ORDER BY name COLLATE NOCASE").fetchall()
-        return [row[0] for row in rows]
-
-    def delete_selected_images(self):
-        count = len(self.selected_ids)
-        if not count:
-            QMessageBox.information(self, "批量删除", "请先勾选要删除的壁纸。")
-            return
-        answer = QMessageBox.question(
-            self, "批量移除壁纸",
-            f"确定从壁纸馆移除选中的 {count} 张壁纸吗？\n\n"
-            "只删除软件内记录和软件自己的图片副本，不会删除原始文件夹中的图片。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if answer == QMessageBox.StandardButton.Yes:
-            removed = self._remove_wallpaper_ids(self.selected_ids)
-            self.statusBar().showMessage(f"已从壁纸馆移除 {removed} 张壁纸", 5000)
-
-    def delete_folder_wallpapers(self):
-        folder = QFileDialog.getExistingDirectory(self, "选择要清空壁纸的来源文件夹", str(Path.home()))
-        if not folder:
-            return
-        root = Path(folder).resolve()
-        with sqlite3.connect(DB_PATH) as db:
-            rows = db.execute("SELECT id, source_path FROM wallpapers WHERE source_path IS NOT NULL AND source_path != ''").fetchall()
-        ids = []
-        for uid, source in rows:
-            try:
-                Path(source).resolve().relative_to(root)
-                ids.append(uid)
-            except (ValueError, OSError):
-                continue
-        if not ids:
-            QMessageBox.information(self, "删除文件夹壁纸", "这个文件夹中没有已导入壁纸。")
-            return
-        answer = QMessageBox.question(
-            self, "删除文件夹内壁纸",
-            f"确定从壁纸馆移除该文件夹导入的全部 {len(ids)} 张壁纸吗？\n\n"
-            "只移除软件内记录和软件自己的图片副本，不会删除文件夹里的原始图片。"
-            "同时取消该文件夹的自动刷新记录。",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        with sqlite3.connect(DB_PATH) as db:
-            db.execute("DELETE FROM source_folders WHERE path=?", (str(root),))
-        removed = self._remove_wallpaper_ids(ids)
-        self.statusBar().showMessage(f"已移除该文件夹的 {removed} 张壁纸，原始图片保留", 5000)
-
-    def delete_image(self, uid):
-        answer = QMessageBox.question(
-            self, "从壁纸馆移除",
-            "确定从壁纸馆移除这张壁纸吗？\n\n"
-            "只会移除软件内的记录和软件自己的副本，"
-            "不会删除导入时所在文件夹中的原始图片。"
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self._remove_wallpaper_ids([uid])
-
-class NoToolTipFilter(QObject):
-    """拦截提示事件，并在 Qt 尝试显示提示型顶层窗口时立即隐藏。"""
-    def eventFilter(self, watched, event):
-        event_type = event.type()
-        if event_type in (QEvent.Type.ToolTip, QEvent.Type.WhatsThis):
-            event.accept()
-            QToolTip.hideText()
-            return True
-
-        # 某些 Windows/Qt 组合会在控件销毁或分页重建后留下空白提示窗。
-        # 在窗口真正显示的事件阶段再拦截一次；普通菜单和对话框不受影响。
-        if event_type == QEvent.Type.Show and isinstance(watched, QWidget):
-            # Qt.WindowType 中没有 WhatsThis；WhatsThis 只对应 QEvent.Type。
-            # 这里只需拦截真正的 Tooltip 顶层窗口。
-            window_type = watched.windowType()
-            if window_type == Qt.WindowType.ToolTip:
-                watched.hide()
-                event.accept()
-                return True
-
-        return super().eventFilter(watched, event)
-
-
-def main():
-    app = QApplication(sys.argv)
-    # 全局拦截工具提示事件；不影响文件选择对话框、菜单和正常操作。
-    app._no_tooltip_filter = NoToolTipFilter(app)
-    app.installEventFilter(app._no_tooltip_filter)
-    app.setStyle("Fusion")
-    app.setStyleSheet(DARK_STYLE)
-    from PySide6.QtCore import qInstallMessageHandler
-    qInstallMessageHandler(_qt_message_handler)
-
-    try:
-        logging.info("Preparing local storage: %s", DATA_DIR)
-        ensure_storage()
-        logging.info("Creating main window")
-        window = MainWindow()
-        window.show()
-        logging.info("Main window shown")
-    except Exception:
-        details = traceback.format_exc()
-        logging.critical("Startup failed\n%s", details)
-        QMessageBox.critical(
-            None, "幻境壁纸馆启动失败",
-            f"程序启动时发生错误。\n\n请把下面的日志文件发给开发者：\n{LOG_PATH}\n\n错误摘要：\n{details[-1800:]}"
-        )
-        return 1
-    return app.exec()
-
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except Exception:
-        logging.critical("Fatal application error\n%s", traceback.format_exc())
-        raise
