@@ -841,7 +841,8 @@ class MainWindow(QMainWindow):
                 row, IMAGE_DIR / row[1], self.open_preview, self.toggle_favorite,
                 self.delete_image, self.rename_image, self.move_category,
                 self.set_wallpaper, self._card_categories,
-                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected
+                self.selection_mode, row[0] in self.selected_ids, self.on_card_selected,
+                parent=self.grid_host
             )
             card.setMinimumWidth(0)
             card.setFixedHeight(self._virtual_row_height)
