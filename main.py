@@ -62,6 +62,23 @@ def _qt_message_handler(mode, context, message):
                   mode, getattr(context, "file", None),
                   getattr(context, "line", None), message)
 
+LIGHT_STYLE = """
+QMainWindow, QWidget { background:#f4f6fb; color:#202534; font-family:'Microsoft YaHei UI'; font-size:13px; }
+QFrame#Sidebar { background:#ffffff; border:1px solid #e2e6ef; border-radius:16px; }
+QLabel#Brand { font-size:21px; font-weight:700; color:#202534; padding:8px 2px; }
+QLabel#Muted { color:#788196; }
+QPushButton { background:#ffffff; border:1px solid #d8deea; border-radius:9px; padding:9px 14px; color:#293246; }
+QPushButton:hover { background:#edf1f8; }
+QPushButton#Primary { background:#7667e8; border:0; font-weight:600; color:#ffffff; }
+QPushButton#Primary:hover { background:#887af5; }
+QLineEdit { background:#ffffff; border:1px solid #d8deea; border-radius:10px; padding:11px 14px; color:#202534; }
+QListWidget { background:transparent; border:0; outline:0; }
+QListWidget::item { padding:11px; border-radius:8px; }
+QListWidget::item:selected { background:#e5e8fb; color:#28234f; }
+QScrollArea { border:0; background:transparent; }
+QDialog { background:#f4f6fb; }
+"""
+
 DARK_STYLE = """
 QMainWindow, QWidget { background:#11131a; color:#edf0f7; font-family:'Microsoft YaHei UI'; font-size:13px; }
 QFrame#Sidebar { background:#171a23; border:1px solid #272b38; border-radius:16px; }
