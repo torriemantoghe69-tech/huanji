@@ -428,10 +428,7 @@ class WallpaperCard(QFrame):
         bottom.addWidget(fav)
         more = QPushButton("···")
         more.setFixedWidth(38)
-        menu = QMenu(more)
-        rename = menu.addAction("重命名")
-        delete = menu.addAction("删除图片")
-        action = menu.exec(more.mapToGlobal(more.rect().bottomLeft())) if False else None
+        # 菜单只在用户点击“···”时创建，避免卡片初始化时残留无用的隐藏菜单。
         more.clicked.connect(lambda: self.show_menu(more, on_delete, on_rename, on_category, on_wallpaper, categories))
         bottom.addWidget(more)
         layout.addLayout(bottom)
@@ -1169,13 +1166,23 @@ class MainWindow(QMainWindow):
         self._remove_wallpaper_ids([uid])
 
 class NoToolTipFilter(QObject):
-    """阻止 Qt 工具提示窗口弹出，避免滚动或鼠标停留时出现闪烁小窗。"""
+    """拦截提示事件，并在 Qt 尝试显示提示型顶层窗口时立即隐藏。"""
     def eventFilter(self, watched, event):
-        if event.type() in (QEvent.Type.ToolTip, QEvent.Type.WhatsThis):
-            # 接受并拦截提示事件，避免 Qt 在分页重建后再次排队显示悬浮窗口。
+        event_type = event.type()
+        if event_type in (QEvent.Type.ToolTip, QEvent.Type.WhatsThis):
             event.accept()
             QToolTip.hideText()
             return True
+
+        # 某些 Windows/Qt 组合会在控件销毁或分页重建后留下空白提示窗。
+        # 在窗口真正显示的事件阶段再拦截一次；普通菜单和对话框不受影响。
+        if event_type == QEvent.Type.Show and isinstance(watched, QWidget):
+            window_type = watched.windowType()
+            if window_type in (Qt.WindowType.ToolTip, Qt.WindowType.WhatsThis):
+                watched.hide()
+                event.accept()
+                return True
+
         return super().eventFilter(watched, event)
 
 
