@@ -233,7 +233,7 @@ class MainWindow(QMainWindow):
         note = QLabel("图片仅保存在本机\n不会自动上传网络")
         note.setObjectName("Muted")
         side.addWidget(note)
-        outer.addWidget(side)
+        outer.addWidget(sidebar)
 
         content = QVBoxLayout()
         header = QHBoxLayout()
