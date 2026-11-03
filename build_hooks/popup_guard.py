@@ -227,11 +227,25 @@ def _install_preview_scaling_patch():
 
         def responsive_dialog_init(self, *args, **kwargs):
             original_dialog_init(self, *args, **kwargs)
+            # Large originals plus three-image prefetch can consume hundreds of MB.
+            # Keep preview decoding serial and retain only the current/previous image.
+            self._preview_pool.setMaxThreadCount(1)
+            self._image_cache_limit = 2
             self._preview_resize_filter = _PreviewImageResizeFilter(self)
             self.image.installEventFilter(self._preview_resize_filter)
 
+        original_request_image = dialog._request_image
+
+        def bounded_request_image(self, index, target):
+            # Do not decode neighbouring images speculatively. Decode only on demand;
+            # this prevents rapid browsing from building a queue of large image jobs.
+            if not self.rows or index % len(self.rows) != self.current_index:
+                return
+            return original_request_image(self, index, target)
+
         dialog.__init__ = responsive_dialog_init
         dialog._cache_key = stable_cache_key
+        dialog._request_image = bounded_request_image
         dialog.show_current = stable_show_current
         dialog._on_image_loaded = stable_image_loaded
         installed["done"] = True
